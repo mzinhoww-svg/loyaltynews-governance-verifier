@@ -1,0 +1,52 @@
+{
+  "status": "configured",
+  "root_fingerprint": "1D4A3E263898E5B0C0590FD7A2A2BB73C4C84309",
+  "baseline_commit": "be18e63fc652ede49842eb1cc3d41a1f3eed6287",
+  "executor": {"fingerprint": "E842D7C1ECA0045D3D7BBFEA47D7C1BC57FD351B", "provider": "anthropic"},
+  "reviewer": {"fingerprint": "BA00DAC46FE7488272BC4F6A72099676E263421D", "provider": "openai"},
+  "verifier": {"fingerprint": "7B4BEE2FE4D42B297A583AF9100957DE6F761D6A"},
+  "runner_policy_sha256": "96b40e74214273e2307344cd31f366c0c23151df289ceebfd9c13fef310d3203",
+  "protected": [
+    "governance/requirements.yaml",
+    "governance/decisions.yaml",
+    "governance/backlog.yaml",
+    "governance/identities.yaml",
+    "governance/findings.csv",
+    "governance/policy.json",
+    "governance/acceptance/",
+    "governance/evidence.schema.json",
+    ".mcp.json",
+    ".gitattributes",
+    ".gitmodules",
+    ".lfsconfig",
+    ".claude/",
+    ".github/",
+    "tools/",
+    "verifier-kit/",
+    "contracts/",
+    "audit-output/",
+    "originals/",
+    "docs/",
+    "prompts/",
+    "tests/"
+  ],
+  "protected_basenames": [".gitattributes", ".gitmodules", ".lfsconfig"],
+  "acceptance_dir": null,
+  "expected_config": {
+    "repos": {
+      "mzinhoww-svg/loyaltynews": {
+        "visibility": "public",
+        "default_branch": "main",
+        "rulesets_active": ["main-protection", "tags-acceptance", "tags-release", "tags-baseline", "tags-other"],
+        "rulesets_disabled": ["emergency-freeze-branches", "emergency-freeze-tags"]
+      },
+      "mzinhoww-svg/loyaltynews-governance-verifier": {
+        "visibility": "public",
+        "default_branch": "main",
+        "rulesets_active": ["verifier-main", "verifier-ledger"],
+        "rulesets_disabled": []
+      }
+    }
+  },
+  "_nota": "Modelo. Valores reais so por commit assinado pela raiz. executor.provider = anthropic e reviewer.provider = openai (DP-02/DP-05: upstreams distintos via OpenRouter, comprovados por /api/v1/generation)."
+}

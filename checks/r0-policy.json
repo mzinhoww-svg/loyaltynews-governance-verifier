@@ -1,0 +1,10 @@
+{
+  "checks": {
+    "R0-05": [
+      {"id": "R0-05-TEST", "argv": ["docker", "run", "--rm", "--network", "none", "--read-only", "--tmpfs", "/tmp:exec", "-e", "HOME=/tmp", "-v", "/clean/product:/w:ro", "-w", "/w", "ln-runner:local", "python3", "tests/test_governance.py"], "timeout_sec": 300},
+      {"id": "R0-05-BYTES", "argv": ["docker", "run", "--rm", "--network", "none", "--read-only", "--tmpfs", "/tmp:exec", "-e", "HOME=/tmp", "-v", "/clean/product:/w:ro", "-w", "/w", "ln-runner:local", "python3", "tests/test_bytes_policy.py"], "timeout_sec": 300},
+      {"id": "GLOBAL-TESTFLAGS", "argv": ["docker", "run", "--rm", "--network", "none", "--read-only", "--tmpfs", "/tmp:exec", "-e", "HOME=/tmp", "-v", "/clean/product:/w:ro", "-v", "/clean/checks:/c:ro", "-w", "/w", "ln-runner:local", "python3", "-I", "-B", "/c/check_test_flags.py", "/w"], "timeout_sec": 120}
+    ]
+  },
+  "note": "Politica aprovada pela raiz (commit assinado). Cada tarefa precisa de checks executaveis proprios; tarefa sem entrada falha fechada (clean_checks.py: 'no trusted tests configured'). R0-05-BYTES so existe depois do patch V21-16 v2 no baseline. GLOBAL-TESTFLAGS (alerta do PM, 22/11/2026) reprova LN_STUDIO_TEST_SESSION definida e PORTAL_SOURCE/PORTAL_MODE=mock fora de caminhos de teste; por convencao entra em TODA entrada de tarefa que mude codigo ou configuracao de deploy (o kit nao tem lista global). Os comandos rodam em container sem rede, produto em /clean/product (ro) e scripts confiaveis em /clean/checks (ro)."
+}

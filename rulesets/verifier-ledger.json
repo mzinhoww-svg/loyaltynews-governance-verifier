@@ -1,0 +1,33 @@
+{
+    "name":  "verifier-ledger",
+    "target":  "branch",
+    "enforcement":  "active",
+    "conditions":  {
+                       "ref_name":  {
+                                        "include":  [
+                                                        "refs/heads/ledger"
+                                                    ],
+                                        "exclude":  [
+
+                                                    ]
+                                    }
+                   },
+    "bypass_actors":  [
+                          {
+                              "bypass_mode":  "always",
+                              "actor_id":  "__APP_ID__",
+                              "actor_type":  "Integration"
+                          }
+                      ],
+    "rules":  [
+                  {
+                      "type":  "update"
+                  },
+                  {
+                      "type":  "deletion"
+                  },
+                  {
+                      "type":  "non_fast_forward"
+                  }
+              ]
+}

@@ -1,0 +1,5 @@
+# Politica de bytes (igual ao produto): nenhuma conversao de fim de linha.
+* -text
+*.png binary
+*.pdf binary
+*.zip binary
