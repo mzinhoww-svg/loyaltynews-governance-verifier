@@ -1,0 +1,16 @@
+name: prova-ambiente
+on:
+  push:
+    branches: ['prova/ambiente-*']
+permissions: {}
+jobs:
+  ambiente-verifier-signing:
+    runs-on: ubuntu-latest
+    environment: verifier-signing
+    steps:
+      - run: echo ENSAIO nao deveria rodar fora de main
+  ambiente-reviewer:
+    runs-on: ubuntu-latest
+    environment: reviewer
+    steps:
+      - run: echo ENSAIO nao deveria rodar fora de main
