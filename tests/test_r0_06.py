@@ -203,6 +203,10 @@ class R006(unittest.TestCase):
         self.assertEqual(body['provider']['only'], ['openai'])
         self.assertIs(body['provider']['allow_fallbacks'], False)
         self.assertEqual(body['provider']['data_collection'], 'deny')
+        self.assertIs(body['provider']['require_parameters'], True)
+        self.assertNotIn('temperature', body)   # 23/11: o modelo nao aceita; com require_parameters a OpenRouter devolvia 404
+        cfg = json.loads((V / 'reviewer' / 'config.json').read_text(encoding='utf-8'))
+        self.assertEqual(sorted(set(body) - {'model', 'messages', 'provider', 'usage'} - set(cfg['supported_parameters'])), [])   # nada fora do declarado
         self.assertEqual(body['model'], MODEL)
         self.assertEqual(body['response_format']['type'], 'json_schema')
         tag = f'review/R0-01/{self.M}'
@@ -241,6 +245,17 @@ class R006(unittest.TestCase):
         r = self.review(self.M, config=p / 'config.json')
         self.assertEqual(r.returncode, 1)
         self.assertIn('acima do teto', r.stdout.decode())
+        self.assertEqual(FakeOpenRouter.state['calls'], [])
+
+    def test_16_parameter_outside_supported_blocks_before_call(self):
+        cfg = dict(CFG, supported_parameters=['response_format'])   # max_tokens fora da lista declarada
+        p = self.tmp / 'cfg16' / 'reviewer'
+        p.mkdir(parents=True)
+        (p / 'config.json').write_text(json.dumps(cfg))
+        shutil.copy(V / 'reviewer' / 'prompt-v1.md', p / 'prompt-v1.md')
+        r = self.review(self.M, config=p / 'config.json')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('fora de supported_parameters', r.stdout.decode())
         self.assertEqual(FakeOpenRouter.state['calls'], [])
 
     def test_06_missing_key_fails_closed(self):

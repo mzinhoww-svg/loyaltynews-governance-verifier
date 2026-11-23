@@ -168,12 +168,16 @@ def main():
         body = {
             'model': cfg['model'],
             'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': pkg}],
-            'temperature': 0, 'max_tokens': cfg['max_tokens'],
+            'max_tokens': cfg['max_tokens'],   # sem 'temperature': o gpt-6.1-terra nao aceita e, com require_parameters, a OpenRouter devolvia 404 (23/11)
             'response_format': {'type': 'json_schema', 'json_schema': {'name': 'ln_review', 'strict': True, 'schema': SCHEMA}},
             'provider': {'order': cfg['provider_order'], 'only': cfg['provider_order'], 'allow_fallbacks': False,
                          'data_collection': 'deny', 'require_parameters': True},
             'usage': {'include': True},
         }
+        # 23/11: so parametros declarados em supported_parameters (com require_parameters, um parametro nao aceito zera os endpoints e da 404)
+        extra = sorted(set(body) - {'model', 'messages', 'provider', 'usage'} - set(cfg.get('supported_parameters') or []))
+        if extra:
+            raise SignError(f'parametro(s) fora de supported_parameters do config: {extra} (modelo nao chamado)')
         resp = http_json(base.rstrip('/') + '/api/v1/chat/completions', key, body)
         gid, rmodel = resp.get('id'), resp.get('model')
         content = ((resp.get('choices') or [{}])[0].get('message') or {}).get('content') or ''
