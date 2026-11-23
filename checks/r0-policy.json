@@ -1102,6 +1102,36 @@
         ],
         "timeout_sec": 120
       }
+    ],
+    "PR": [
+      {
+        "id": "GLOBAL-TESTFLAGS",
+        "argv": [
+          "docker",
+          "run",
+          "--rm",
+          "--network",
+          "none",
+          "--read-only",
+          "--tmpfs",
+          "/tmp:exec",
+          "-e",
+          "HOME=/tmp",
+          "-v",
+          "/clean/product:/w:ro",
+          "-v",
+          "/clean/checks:/c:ro",
+          "-w",
+          "/w",
+          "ln-runner:local",
+          "python3",
+          "-I",
+          "-B",
+          "/c/check_test_flags.py",
+          "/w"
+        ],
+        "timeout_sec": 120
+      }
     ]
   },
   "note": "Politica aprovada pela raiz (commit assinado). Cada tarefa precisa de checks executaveis proprios; tarefa sem entrada falha fechada (clean_checks.py: 'no trusted tests configured'). R0-06 (23/11/2026): entrada para cada tarefa R0 — <T>-TEST roda /c/check_r0.py (regras da forma verificavel da evidencia; merito e do revisor) e o gate R0-12 reune todos os testes exigidos da onda (verifier.py exige required_tests de cada tarefa + o do gate). R0-05-TEST/BYTES: suites do produto. GLOBAL-TESTFLAGS em toda entrada. Comandos em container sem rede; produto em /clean/product (ro); scripts e chaves publicas confiaveis em /clean/checks (ro)."

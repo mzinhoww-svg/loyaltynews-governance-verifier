@@ -1,11 +1,11 @@
 {
   "status": "configured",
   "root_fingerprint": "1D4A3E263898E5B0C0590FD7A2A2BB73C4C84309",
-  "baseline_commit": "47aec7c121b6098c426d8d5b4c97aaa10ca528bb",
+  "baseline_commit": "151c26358c47a51132a0b2716e7d1d03b66b9015",
   "executor": {"fingerprint": "E842D7C1ECA0045D3D7BBFEA47D7C1BC57FD351B", "provider": "anthropic"},
   "reviewer": {"fingerprint": "BA00DAC46FE7488272BC4F6A72099676E263421D", "provider": "openai"},
   "verifier": {"fingerprint": "7B4BEE2FE4D42B297A583AF9100957DE6F761D6A"},
-  "runner_policy_sha256": "5d15cbc0f5ee224b7f26aaaecc916dc18b0e158b91830bb86d92db985f83b20d",
+  "runner_policy_sha256": "ed53389b672c87642cd02c2b9ba7bc2e31f0f8fab5648525587fb5393d03b538",
   "protected": [
     "governance/requirements.yaml",
     "governance/decisions.yaml",

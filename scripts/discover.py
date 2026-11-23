@@ -17,6 +17,10 @@ Regras (as mesmas que o assinador e o kit aplicam; a descoberta so evita dispara
  - Gate (policy.gate_tasks): quando todas as tarefas da onda tem aceite valido e o gate nao, alvo = ponta da cadeia
    (origin/main), se nao houver rejeicao em (gate, ponta).
  - --limit (padrao 1): o workflow processa um alvo por execucao (custo do revisor; concurrency do workflow).
+ - --prs --repo <owner/nome> (status pre-merge, opcao B do PM): depois dos alvos de aceite, PRs abertos para main do produto
+   cujo head H ainda nao tem os 2 status da App (ln-verifier/protected-paths e ln-verifier/clean-checks): alvo
+   {task: 'PR', target: H, mode: 'pr', pr: numero}, do PR mais antigo ao mais novo. API publica (LN_GITHUB_API para testes;
+   GITHUB_TOKEN opcional, so leitura). Status de quem nao e bot da App nao conta.
 """
 import argparse
 import json
@@ -27,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / 'kit'))
@@ -119,6 +124,36 @@ def discover(repo, trust, limit):
     return {'alvos': alvos[:max(0, limit)], 'pulados': pulados, 'total_candidatos': len(alvos)}
 
 
+PR_CONTEXTS = ('ln-verifier/protected-paths', 'ln-verifier/clean-checks')
+
+
+def api_get(path):
+    base = os.environ.get('LN_GITHUB_API', 'https://api.github.com').rstrip('/')
+    h = {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
+    if os.environ.get('GITHUB_TOKEN'):
+        h['Authorization'] = 'Bearer ' + os.environ['GITHUB_TOKEN']
+    with urllib.request.urlopen(urllib.request.Request(base + path, headers=h), timeout=30) as r:
+        return json.load(r)
+
+
+def discover_prs(repo_name, app_slug):
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo_name or ''):
+        raise SystemExit('--repo invalido')
+    alvos, pulados = [], []
+    prs = api_get(f'/repos/{repo_name}/pulls?state=open&base=main&sort=created&direction=asc&per_page=50')
+    for pr in prs:
+        h = (pr.get('head') or {}).get('sha', '')
+        if not SHA.match(h):
+            continue
+        sts = api_get(f'/repos/{repo_name}/commits/{h}/statuses?per_page=100')
+        meus = {s.get('context') for s in sts if (s.get('creator') or {}).get('login') == app_slug + '[bot]'}
+        if set(PR_CONTEXTS) <= meus:
+            pulados.append({'task': 'PR', 'target': h, 'motivo': f"STATUS_JA_POSTADO (PR #{pr.get('number')})"})
+            continue
+        alvos.append({'task': 'PR', 'target': h, 'mode': 'pr', 'pr': pr.get('number'), 'motivo': 'PR aberto sem os 2 status da App'})
+    return alvos, pulados
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--product', required=True)
@@ -126,6 +161,9 @@ def main():
     ap.add_argument('--keys', required=True)
     ap.add_argument('--limit', type=int, default=1)
     ap.add_argument('--out')
+    ap.add_argument('--prs', action='store_true', help='inclui PRs abertos sem os status pre-merge (opcao B)')
+    ap.add_argument('--repo', help='owner/nome do produto (com --prs)')
+    ap.add_argument('--app-slug', default='ln-verifier', help='slug da App que posta os status (com --prs)')
     a = ap.parse_args()
     repo = pathlib.Path(a.product).resolve()
     trust_path = pathlib.Path(a.trust).resolve()
@@ -149,6 +187,11 @@ def main():
         else:
             os.environ['GNUPGHOME'] = old
         shutil.rmtree(home, ignore_errors=True)
+    if a.prs and len(res['alvos']) < a.limit:
+        pa, pp = discover_prs(a.repo, a.app_slug)
+        res['alvos'] += pa[:a.limit - len(res['alvos'])]
+        res['pulados'] += pp
+        res['total_candidatos'] += len(pa)
     txt = json.dumps(res, ensure_ascii=False, indent=2)
     if a.out:
         pathlib.Path(a.out).write_text(txt + '\n', encoding='utf-8')

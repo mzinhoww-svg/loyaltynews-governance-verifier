@@ -5,7 +5,7 @@
 name: ln-verifier
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "7,37 * * * *"   # fora de :00/:30 (pico do agendador; docs GitHub, decisao do PM 23/11)
   workflow_dispatch:
     inputs:
       task:   {description: "ID da tarefa ou gate (ex.: R0-05)", required: true, type: string}
@@ -89,6 +89,7 @@ jobs:
           IN_TASK: ${{ inputs.task }}
           IN_TARGET: ${{ inputs.target }}
           IN_MODE: ${{ inputs.mode }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [ "$GH_EVENT" = "workflow_dispatch" ]; then
             [[ "$IN_TASK" =~ ^R[0-6]-[0-9]{2}$ ]] || { echo 'task invalida (use o id completo, ex.: R0-05 ou R0-12)'; exit 1; }
@@ -100,12 +101,14 @@ jobs:
             git clone -q --no-checkout "https://github.com/${PRODUCT_REPO}.git" product
             git -C product fetch -q origin 'refs/tags/*:refs/tags/*'
             printf '* -text\n' > product/.git/info/attributes
-            python3 -I -B trusted/scripts/discover.py --product product --trust trusted/trust.json --keys trusted/keys --limit 1 --out alvos.json > /dev/null
+            python3 -I -B trusted/scripts/discover.py --product product --trust trusted/trust.json --keys trusted/keys --limit 1 --prs --repo "$PRODUCT_REPO" --out alvos.json > /dev/null
             python3 -I - <<'EOF' >> "$GITHUB_OUTPUT"
           import json, re
           a = json.load(open('alvos.json', encoding='utf-8'))['alvos']
           if a and re.fullmatch(r'R[0-6]-[0-9]{2}', a[0]['task']) and re.fullmatch(r'[0-9a-f]{40}', a[0]['target']) and a[0]['mode'] == 'accept':
               print('task=%s\ntarget=%s\nmode=accept\nrun=true' % (a[0]['task'], a[0]['target']))
+          elif a and a[0]['task'] == 'PR' and re.fullmatch(r'[0-9a-f]{40}', a[0]['target']) and a[0]['mode'] == 'pr':
+              print('task=PR\ntarget=%s\nmode=pr\nrun=true' % a[0]['target'])
           else:
               print('run=false')
           EOF
@@ -124,6 +127,7 @@ jobs:
         run: |
           [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || exit 1
           git clone --no-checkout "https://github.com/${PRODUCT_REPO}.git" product
+          git -C product fetch -q origin '+refs/pull/*/head:refs/remotes/origin/pr/*'   # head H de PR (status pre-merge)
           git -C product -c core.hooksPath=/dev/null checkout --detach "$TARGET"
           git -C product bundle create ../product.bundle --all
           sha256sum product.bundle | tee product.bundle.sha256
@@ -162,7 +166,7 @@ jobs:
           TARGET: ${{ needs.discover.outputs.target }}
           TASK: ${{ needs.discover.outputs.task }}
         run: |
-          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^R[0-6]-[0-9]{2}$ ]] || exit 1
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^(R[0-6]-[0-9]{2}|PR)$ ]] || exit 1
           mkdir -p /tmp/out
           env -i PATH="$PATH" HOME="$HOME" python3 trusted/kit/clean_checks.py --checkout /clean/product \
             --target "$TARGET" --policy trusted/checks/r0-policy.json --task "$TASK" \
@@ -174,6 +178,7 @@ jobs:
 
   reviewer:
     needs: [trust-gate, discover, runner]
+    if: needs.discover.outputs.mode != 'pr'
     runs-on: ubuntu-latest
     environment: reviewer
     permissions: {contents: read}
@@ -205,6 +210,7 @@ jobs:
 
   signer:
     needs: [trust-gate, discover, runner, reviewer]
+    if: needs.discover.outputs.mode != 'pr'
     runs-on: ubuntu-latest
     environment: verifier-signing
     permissions: {contents: read, actions: read}
@@ -256,3 +262,53 @@ jobs:
             --trust trusted/trust.json --policy trusted/checks/r0-policy.json --runner-report report/runner-report.json \
             --review-tag review/review-tag.txt --review-meta review/review-meta.json \
             --push-url "https://github.com/${PRODUCT_REPO}.git"
+
+  pr-status:
+    # Status pre-merge (opcao B do PM, PM-2026-11-23-A): ln-verifier/protected-paths e ln-verifier/clean-checks no head H do PR,
+    # postados pela App. Sem LLM. So depois do runner limpo e da proveniencia do relatorio; nunca "success" sem os dois resultados.
+    needs: [trust-gate, discover, runner]
+    if: needs.discover.outputs.mode == 'pr'
+    runs-on: ubuntu-latest
+    environment: verifier-signing
+    permissions: {contents: read, actions: read}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ needs.trust-gate.outputs.verified_sha }}", path: trusted, persist-credentials: false}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: product-bundle}
+      - name: Relatorio do runner pela API, proveniencia e avaliacao dos 2 status
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUNNER_ARTIFACT_ID: ${{ needs.runner.outputs.artifact-id }}
+          RUNNER_ARTIFACT_DIGEST: ${{ needs.runner.outputs.artifact-digest }}
+          RUNNER_REPORT_SHA256: ${{ needs.runner.outputs.report_sha256 }}
+          TARGET: ${{ needs.discover.outputs.target }}
+          TASK: ${{ needs.discover.outputs.task }}
+        run: |
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" = "PR" && "$RUNNER_ARTIFACT_ID" =~ ^[0-9]+$ ]] || exit 1
+          curl -sSfL -H "Authorization: Bearer $GITHUB_TOKEN" -o report.zip \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${RUNNER_ARTIFACT_ID}/zip"
+          unzip -o -q report.zip -d report || true
+          sha256sum -c product.bundle.sha256
+          git clone -q product.bundle /tmp/product
+          git -C /tmp/product -c core.hooksPath=/dev/null checkout -q --detach "$TARGET"
+          printf '* -text\n' > /tmp/product/.git/info/attributes
+          if python3 trusted/scripts/provenance.py report.zip trusted/trust.json trusted/checks/r0-policy.json "$TARGET" "$TASK"; then REP=report/runner-report.json; else echo 'proveniencia falhou: clean-checks sera failure'; REP=/dev/null/ausente; fi
+          python3 -I -B trusted/scripts/premerge.py avaliar --product /tmp/product --target "$TARGET" --trust trusted/trust.json \
+            --keys trusted/keys --runner-report "$REP" --out /tmp/status.json
+      - name: Token da App LN Verifier (so o produto)
+        id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.LN_VERIFIER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LN_VERIFIER_APP_PRIVATE_KEY }}
+          owner: mzinhoww-svg
+          repositories: loyaltynews
+      - name: Postar os 2 status no head do PR
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          TARGET: ${{ needs.discover.outputs.target }}
+        run: |
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          python3 -I -B trusted/scripts/premerge.py postar --repo "$PRODUCT_REPO" --sha "$TARGET" --statuses /tmp/status.json \
+            --target-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
