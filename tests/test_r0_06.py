@@ -230,6 +230,29 @@ class R006(unittest.TestCase):
         FakeOpenRouter.state['gen_model'] = 'openai/outro-modelo'
         self.assertEqual(self.review(self.M).returncode, 1)
 
+    def test_17_generation_model_with_date_suffix_accepted(self):
+        # resposta com o id curto e generation com o id datado (ambos em accepted_models): mesma geracao, aceita
+        dated = [m for m in CFG['accepted_models'] if m != MODEL][0]
+        FakeOpenRouter.state['gen_model'] = dated
+        r = self.review(self.M)
+        self.assertEqual(r.returncode, 0, r.stdout.decode() + r.stderr.decode())
+        git(self.clone, 'tag', '-d', f'review/R0-01/{self.M}')       # o 1o caso ja assinou a revisao neste clone descartavel
+        FakeOpenRouter.state.update(model=dated, gen_model=MODEL)   # e o inverso
+        r2 = self.review(self.M)
+        self.assertEqual(r2.returncode, 0, r2.stdout.decode() + r2.stderr.decode())
+        self.assertEqual(self.payload(self.clone, f'review/R0-01/{self.M}')['generation_model'], MODEL)   # gravado na tag
+        git(self.clone, 'tag', '-d', f'review/R0-01/{self.M}')
+        FakeOpenRouter.state.update(model=dated, gen_model=dated)   # data nos dois lados
+        r3 = self.review(self.M)
+        self.assertEqual(r3.returncode, 0, r3.stdout.decode() + r3.stderr.decode())
+
+    def test_18_generation_model_other_snapshot_or_family_rejected(self):
+        for gm in (MODEL + '-20991231', 'openai/gpt-6.1-sol', 'openai/gpt-6.1-terra-pro', MODEL + ':flex'):
+            FakeOpenRouter.state['gen_model'] = gm
+            r = self.review(self.M)
+            self.assertEqual(r.returncode, 1, gm)
+            self.assertIn('fora da lista aceita', r.stdout.decode())
+
     def test_04_runner_failed_skips_model_call(self):
         r = self.review(self.M, failed=True)
         self.assertEqual(r.returncode, 0)

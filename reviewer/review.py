@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import pathlib
 import sys
 import time
@@ -52,6 +53,11 @@ def sha256(b):
 
 def log(msg):
     print('[revisor] ' + msg, flush=True)
+
+
+def same_model(model_id):
+    """Id do modelo sem o sufixo de data -AAAAMMDD (unica normalizacao aceita na proveniencia)."""
+    return re.sub(r'-\d{8}$', '', model_id or '')
 
 
 def http_json(url, key, body=None, timeout=120):
@@ -202,15 +208,18 @@ def main():
             raise SignError('generation indisponivel: sem prova de upstream (falha fechada)')
         if gen.get('provider_name') not in cfg['accepted_provider_names']:
             raise SignError(f"upstream nao aceito: {gen.get('provider_name')}")
-        if gen.get('model') != rmodel:
-            raise SignError('generation.model difere de response.model')
+        # 23/11: a OpenRouter pode devolver o id com e sem o sufixo de data (ex.: openai/gpt-6.1-terra x openai/gpt-6.1-terra-20261026).
+        # Os DOIS tem de estar em accepted_models e ser o MESMO modelo depois de tirar so o sufixo -AAAAMMDD; nada mais e normalizado.
+        gmodel = gen.get('model')
+        if gmodel not in cfg['accepted_models'] or same_model(gmodel) != same_model(rmodel) or same_model(rmodel) != same_model(cfg['model']):
+            raise SignError(f'generation.model difere de response.model ou fora da lista aceita: {gmodel} x {rmodel}')
         fpr = trust['reviewer']['fingerprint']
         kr = Keyring(verifier_root / 'keys', 'REVIEWER_GPG_PRIVATE_KEY', 'REVIEWER_GPG_PASSPHRASE', expect_secret_fpr=fpr)
         payload = {
             'id': a.task, 'decision': verdict['decision'],
             'executor_provider': trust['executor']['provider'], 'reviewer_provider': trust['reviewer']['provider'],
             'executor_fingerprint': trust['executor']['fingerprint'], 'reviewer_fingerprint': fpr,
-            'model': rmodel, 'provider_name': gen.get('provider_name'), 'generation_id': gid,
+            'model': rmodel, 'generation_model': gmodel, 'provider_name': gen.get('provider_name'), 'generation_id': gid,
             'prompt_version': cfg['prompt_version'], 'prompt_sha256': sha256(prompt.encode()),
             'package_sha256': sha256(pkg.encode()), 'response_sha256': sha256(content.encode()),
             'runner_report_sha256': sha256(canon(report)), 'total_cost': gen.get('total_cost'),
