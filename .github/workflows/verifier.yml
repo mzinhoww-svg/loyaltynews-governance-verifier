@@ -73,25 +73,43 @@ jobs:
   discover:
     needs: [trust-gate, guard]
     runs-on: ubuntu-latest
-    permissions: {}
+    permissions: {contents: read}
     outputs:
       run: ${{ steps.d.outputs.run }}
       task: ${{ steps.d.outputs.task }}
       target: ${{ steps.d.outputs.target }}
+      mode: ${{ steps.d.outputs.mode }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ needs.trust-gate.outputs.verified_sha }}", path: trusted, persist-credentials: false}
       - id: d
-        name: Alvo (entradas manuais validadas antes de qualquer uso; so por env)
+        name: Alvo (manual validado, ou descoberta automatica sobre o clone publico do produto; so por env)
         env:
           GH_EVENT: ${{ github.event_name }}
           IN_TASK: ${{ inputs.task }}
           IN_TARGET: ${{ inputs.target }}
+          IN_MODE: ${{ inputs.mode }}
         run: |
           if [ "$GH_EVENT" = "workflow_dispatch" ]; then
             [[ "$IN_TASK" =~ ^R[0-6]-[0-9]{2}$ ]] || { echo 'task invalida (use o id completo, ex.: R0-05 ou R0-12)'; exit 1; }
             [[ "$IN_TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo 'target invalido'; exit 1; }
-            printf 'task=%s\ntarget=%s\nrun=true\n' "$IN_TASK" "$IN_TARGET" >> "$GITHUB_OUTPUT"
+            [[ "$IN_MODE" =~ ^(accept|premerge)$ ]] || { echo 'mode invalido'; exit 1; }
+            printf 'task=%s\ntarget=%s\nmode=%s\nrun=true\n' "$IN_TASK" "$IN_TARGET" "$IN_MODE" >> "$GITHUB_OUTPUT"
           else
-            echo 'run=false' >> "$GITHUB_OUTPUT"   # agendado: so guard ate a descoberta existir
+            # agendado: descoberta (02 v3 par.2) sem credencial; um alvo por execucao; nada e assinado aqui
+            git clone -q --no-checkout "https://github.com/${PRODUCT_REPO}.git" product
+            git -C product fetch -q origin 'refs/tags/*:refs/tags/*'
+            printf '* -text\n' > product/.git/info/attributes
+            python3 -I -B trusted/scripts/discover.py --product product --trust trusted/trust.json --keys trusted/keys --limit 1 --out alvos.json > /dev/null
+            python3 -I - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, re
+          a = json.load(open('alvos.json', encoding='utf-8'))['alvos']
+          if a and re.fullmatch(r'R[0-6]-[0-9]{2}', a[0]['task']) and re.fullmatch(r'[0-9a-f]{40}', a[0]['target']) and a[0]['mode'] == 'accept':
+              print('task=%s\ntarget=%s\nmode=accept\nrun=true' % (a[0]['task'], a[0]['target']))
+          else:
+              print('run=false')
+          EOF
+            cat alvos.json   # registro no log (sem segredo): alvo escolhido e pulados com motivo
           fi
 
   fetch:
@@ -225,7 +243,7 @@ jobs:
           APP_TOKEN: ${{ steps.app.outputs.token }}
           TARGET: ${{ needs.discover.outputs.target }}
           TASK: ${{ needs.discover.outputs.task }}
-          MODE: ${{ inputs.mode }}
+          MODE: ${{ needs.discover.outputs.mode }}
         run: |
           [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^R[0-6]-[0-9]{2}$ && "$MODE" =~ ^(accept|premerge)$ ]] || exit 1
           sha256sum -c product.bundle.sha256

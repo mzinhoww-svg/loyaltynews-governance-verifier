@@ -125,7 +125,9 @@ def r0_03(root, keys):
 def r0_04(root, keys):
     # Tags v1.0/v2.0 anotadas, assinadas pela raiz, arvores = manifestos (7 e 11), v1.0 contida na v2.0.
     raiz = pathlib.Path(keys) / 'raiz.asc' if keys else None
-    for tag, prefix, n in (('v1.0', 'baseline-v1.0', 7), ('v2.0', 'spec-v2.0', 11)):
+    # Layout dos ZIPs originais: no v1.0 os 7 arquivos do manifesto ficam em baseline/ (o manifesto lista so o nome);
+    # no v2.0 os 11 ficam na raiz do ZIP (achado do Security no ensaio da R0-04, 23/11; igual ao verifica_commits.py).
+    for tag, prefix, n, sub in (('v1.0', 'baseline-v1.0', 7, 'baseline/'), ('v2.0', 'spec-v2.0', 11, '')):
         t = git(root, 'cat-file', '-t', tag)
         if not ok(t is not None and t.stdout.decode().strip() == 'tag', f'{tag}: tag anotada presente'):
             continue
@@ -154,7 +156,7 @@ def r0_04(root, keys):
             entries = {x.get('path') or x.get('caminho'): x.get('sha256') for x in entries}
         good = 0
         for rel, want in entries.items():
-            blob = git(root, 'cat-file', 'blob', f'{tag}:{prefix}/{rel}')
+            blob = git(root, 'cat-file', 'blob', f'{tag}:{prefix}/{sub}{rel}')
             good += bool(blob is not None and hashlib.sha256(blob.stdout).hexdigest() == str(want).lower())
         ok(good == len(entries) and len(entries) >= n, f'{tag}: {good}/{len(entries)} blobs conferem com o manifesto (minimo {n})')
     v1 = git(root, 'ls-tree', '-r', 'v1.0', '--', 'baseline-v1.0')
