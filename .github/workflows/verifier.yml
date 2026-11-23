@@ -87,7 +87,7 @@ jobs:
           IN_TARGET: ${{ inputs.target }}
         run: |
           if [ "$GH_EVENT" = "workflow_dispatch" ]; then
-            [[ "$IN_TASK" =~ ^R[0-6](-[0-9]{2})?$ ]] || { echo 'task invalida'; exit 1; }
+            [[ "$IN_TASK" =~ ^R[0-6]-[0-9]{2}$ ]] || { echo 'task invalida (use o id completo, ex.: R0-05 ou R0-12)'; exit 1; }
             [[ "$IN_TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo 'target invalido'; exit 1; }
             printf 'task=%s\ntarget=%s\nrun=true\n' "$IN_TASK" "$IN_TARGET" >> "$GITHUB_OUTPUT"
           else
@@ -135,7 +135,7 @@ jobs:
           git clone -q product.bundle /clean/product
           git -C /clean/product -c core.hooksPath=/dev/null checkout -q --detach "$TARGET"
           printf '* -text\n' > /clean/product/.git/info/attributes
-          mkdir -p /clean/checks && cp trusted/checks/scripts/*.py /clean/checks/ && chmod -R a-w /clean/checks
+          mkdir -p /clean/checks/keys && cp trusted/checks/scripts/*.py /clean/checks/ && cp trusted/keys/*.asc /clean/checks/keys/ && chmod -R a-w /clean/checks
       - name: Imagem do runner
         run: docker build -t ln-runner:local trusted/runner
       - id: rep
@@ -144,7 +144,7 @@ jobs:
           TARGET: ${{ needs.discover.outputs.target }}
           TASK: ${{ needs.discover.outputs.task }}
         run: |
-          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^R[0-6](-[0-9]{2})?$ ]] || exit 1
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^R[0-6]-[0-9]{2}$ ]] || exit 1
           mkdir -p /tmp/out
           env -i PATH="$PATH" HOME="$HOME" python3 trusted/kit/clean_checks.py --checkout /clean/product \
             --target "$TARGET" --policy trusted/checks/r0-policy.json --task "$TASK" \
@@ -155,18 +155,35 @@ jobs:
         with: {name: "runner-report-${{ needs.discover.outputs.task }}-${{ needs.discover.outputs.target }}", path: /tmp/out/runner-report.json, retention-days: 30}
 
   reviewer:
-    needs: [trust-gate, runner]
+    needs: [trust-gate, discover, runner]
     runs-on: ubuntu-latest
     environment: reviewer
     permissions: {contents: read}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {ref: "${{ needs.trust-gate.outputs.verified_sha }}", persist-credentials: false}
-      - name: Revisor de outro provedor (R0-06)
+        with: {ref: "${{ needs.trust-gate.outputs.verified_sha }}", path: trusted, persist-credentials: false}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: product-bundle}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: "runner-report-${{ needs.discover.outputs.task }}-${{ needs.discover.outputs.target }}", path: runner}
+      - name: Revisor de outro provedor (R0-06; OpenRouter -> OpenAI, provider.only + allow_fallbacks=false)
+        env:
+          TARGET: ${{ needs.discover.outputs.target }}
+          TASK: ${{ needs.discover.outputs.task }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          REVIEWER_GPG_PRIVATE_KEY: ${{ secrets.REVIEWER_GPG_PRIVATE_KEY }}
+          REVIEWER_GPG_PASSPHRASE: ${{ secrets.REVIEWER_GPG_PASSPHRASE }}
         run: |
-          echo "REVIEWER_NOT_CONFIGURED: prompt, modelo e roteamento OpenRouter (provider.only + allow_fallbacks=false)"
-          echo "e prova de upstream via /api/v1/generation sao entregas da R0-06. Falha fechada ate la."
-          exit 1
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^R[0-6]-[0-9]{2}$ ]] || exit 1
+          sha256sum -c product.bundle.sha256
+          git clone -q product.bundle /tmp/product
+          git -C /tmp/product -c core.hooksPath=/dev/null checkout -q --detach "$TARGET"
+          printf '* -text\n' > /tmp/product/.git/info/attributes
+          python3 -I -B trusted/reviewer/review.py --product /tmp/product --target "$TARGET" --task "$TASK" \
+            --trust trusted/trust.json --config trusted/reviewer/config.json \
+            --runner-report runner/runner-report.json --out /tmp/review
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: "review-${{ needs.discover.outputs.task }}-${{ needs.discover.outputs.target }}", path: "/tmp/review/review-tag.txt\n/tmp/review/review-meta.json", retention-days: 30}
 
   signer:
     needs: [trust-gate, discover, runner, reviewer]
@@ -185,7 +202,7 @@ jobs:
           TARGET: ${{ needs.discover.outputs.target }}
           TASK: ${{ needs.discover.outputs.task }}
         run: |
-          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^R[0-6](-[0-9]{2})?$ && "$RUNNER_ARTIFACT_ID" =~ ^[0-9]+$ ]] || exit 1
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^R[0-6]-[0-9]{2}$ && "$RUNNER_ARTIFACT_ID" =~ ^[0-9]+$ ]] || exit 1
           curl -sSfL -H "Authorization: Bearer $GITHUB_TOKEN" -o report.zip \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${RUNNER_ARTIFACT_ID}/zip"
           python3 trusted/scripts/provenance.py report.zip trusted/trust.json trusted/checks/r0-policy.json "$TARGET" "$TASK"
@@ -197,12 +214,27 @@ jobs:
           private-key: ${{ secrets.LN_VERIFIER_APP_PRIVATE_KEY }}
           owner: mzinhoww-svg
           repositories: loyaltynews
-      - name: Assinar checks e aceite (clone limpo, kit do repo verificador)
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: product-bundle}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: "review-${{ needs.discover.outputs.task }}-${{ needs.discover.outputs.target }}", path: review}
+      - name: Assinar checks e aceite (clone limpo, kit do repo verificador; push so das refs validadas)
         env:
           VERIFIER_GPG_PRIVATE_KEY: ${{ secrets.VERIFIER_GPG_PRIVATE_KEY }}
           VERIFIER_GPG_PASSPHRASE: ${{ secrets.VERIFIER_GPG_PASSPHRASE }}
           APP_TOKEN: ${{ steps.app.outputs.token }}
+          TARGET: ${{ needs.discover.outputs.target }}
+          TASK: ${{ needs.discover.outputs.task }}
+          MODE: ${{ inputs.mode }}
         run: |
-          echo "SIGNER_INCOMPLETO: integracao final (checks/<T>/<SHA>, regras de M em 02 v3, push so das refs validadas)"
-          echo "depende do revisor (R0-06). Falha fechada."
-          exit 1
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^R[0-6]-[0-9]{2}$ && "$MODE" =~ ^(accept|premerge)$ ]] || exit 1
+          sha256sum -c product.bundle.sha256
+          git clone -q product.bundle /tmp/product
+          git -C /tmp/product fetch -q origin 'refs/tags/*:refs/tags/*'
+          git -C /tmp/product -c core.hooksPath=/dev/null checkout -q --detach "$TARGET"
+          printf '* -text\n' > /tmp/product/.git/info/attributes
+          unzip -o -q report.zip -d report
+          python3 -I -B trusted/scripts/signer.py --product /tmp/product --target "$TARGET" --task "$TASK" --mode "$MODE" \
+            --trust trusted/trust.json --policy trusted/checks/r0-policy.json --runner-report report/runner-report.json \
+            --review-tag review/review-tag.txt --review-meta review/review-meta.json \
+            --push-url "https://github.com/${PRODUCT_REPO}.git"

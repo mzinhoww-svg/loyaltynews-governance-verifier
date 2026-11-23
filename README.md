@@ -5,15 +5,36 @@ Repositório **público** (DP-06). Aqui não há nenhum segredo: chaves privadas
 |---|---|
 | `.github/workflows/verifier.yml` | Jobs `trust-gate` → `guard` → `discover` → `fetch` → `runner` → `reviewer` → `signer` |
 | `trust.json` | Fingerprints, baseline do produto, hash da política, caminhos protegidos, configuração esperada. Muda só por commit assinado pela raiz |
-| `checks/r0-policy.json` | Política de checks (argv fixo, container sem rede) |
+| `checks/r0-policy.json` | Política de checks (argv fixo, container sem rede), com uma entrada por tarefa R0 e o gate R0-12 reunindo os testes exigidos da onda |
+| `checks/scripts/check_r0.py` | Regras confiáveis da forma verificável da evidência de cada tarefa R0 (o mérito é do revisor); falha fechada |
+| `keys/*.asc` | Chaves **públicas** de raiz, executor, revisor e verificador (as mesmas fingerprints do `trust.json`) |
+| `reviewer/` | `review.py`, `config.json` (modelo, preço, teto de custo) e `prompt-v1.md` do revisor de outro provedor |
+| `scripts/signer.py` | Assinador: `checks/<T>/<SHA>`, parecer do revisor, `kit/verifier.py gov_accept_gate`, push só das refs validadas |
+| `scripts/lnsign.py` | Chaveiro descartável, assinatura, verificação e transporte de tags (comum ao revisor e ao assinador) |
 | `scripts/verify_root_chain.sh` | Todo commit desde `TRUST_ANCHOR_SHA` precisa ter assinatura da raiz (`ROOT_FPR`) |
 | `scripts/guard.py` | Detecção de desvio (rulesets, visibilidade, parada de emergência) |
 | `scripts/provenance.py` | Validação conjunta: workflow, run, tentativa, job, ZIP, JSON, política, commit |
 | `kit/` | `verifier.py`, `gov.py`, `clean_checks.py` do pacote v2.1 com o patch V21-16 v2 |
 | `runner/Dockerfile` | Imagem dos testes (git + gnupg), sem rede na execução |
+| `tests/test_r0_06.py` | Testes locais com **chaves falsas** e **OpenRouter falso** (127.0.0.1): `python -B tests/test_r0_06.py` |
 
-Variáveis de repositório (públicas): `ROOT_FPR`, `ROOT_PUBKEY`, `TRUST_ANCHOR_SHA`, `LN_EMERGENCY_STOP`, `LN_VERIFIER_APP_ID`.
+Variáveis de repositório (públicas): `ROOT_FPR`, `ROOT_PUBKEY`, `TRUST_ANCHOR_SHA`, `LN_EMERGENCY_STOP`, `LN_VERIFIER_APP_CLIENT_ID`.
+Segredos:
+- ambiente `reviewer`: `OPENROUTER_API_KEY` (a chave OpenRouter existente, DP-19), `REVIEWER_GPG_PRIVATE_KEY`, `REVIEWER_GPG_PASSPHRASE`;
+- ambiente `verifier-signing`: `VERIFIER_GPG_PRIVATE_KEY`, `VERIFIER_GPG_PASSPHRASE`, `LN_VERIFIER_APP_PRIVATE_KEY`.
 
-Estado: os jobs `reviewer` e `signer` **falham fechados** de propósito, até a R0-06 entregar o prompt e o modelo do revisor e a integração final do signer. Até lá, nenhuma tag é assinada. A descoberta automática de alvos também está pendente; por ora o disparo é manual (`workflow_dispatch`).
+## Revisor (R0-06)
+- OpenRouter → modelo `openai/gpt-6.1-terra`, a rota `openai-text-review` da política DP-02 v5. Requisição com `provider.only=[openai]`, `allow_fallbacks=false`, `data_collection=deny` e saída JSON com esquema estrito.
+- Prova de upstream: `/api/v1/generation` precisa trazer `provider_name` = OpenAI e `model` igual ao da resposta. Sem isso, falha fechada.
+- Economia de saldo:
+  - não chama o modelo se a evidência não existe ou se o runner reprovou (nesses casos registra "pulado", e o assinador assina a rejeição);
+  - estima o custo antes e recusa acima de `max_cost_usd_per_call`.
+- Log público: só provider, modelo, id da geração, versão do prompt, custo e decisão.
 
-Parada de emergência: `LN_EMERGENCY_STOP=1` faz o `guard` falhar e nada roda depois dele.
+## Assinador (R0-06)
+- Aceite de tarefa só no merge commit Mᵢ da cadeia de primeiro pai de `main`, com Mᵢ^2 = Hᵢ e árvores iguais (02 v3). Gate: alvo na cadeia de primeiro pai. `premerge` nunca aceita.
+- Assina `checks/<T>/<SHA>`, reconstrói a tag do revisor byte a byte (`git mktag`), roda `kit/verifier.py gov_accept_gate` (aceite ou rejeição assinada com motivo), reverifica cada ref e empurra só `refs/tags/` com o token da App, sem `--force`.
+
+Estado: implementado na branch `r0-06/revisor-assinador`, com testes locais 15/15. Entra em `main` só por **commit assinado pela raiz** (o ruleset `verifier-main` restringe updates, e `verify_root_chain.sh` exige assinatura da raiz em todo commit). Pendente: gravação no `ledger` (03 v3) e descoberta automática de alvos (hoje o disparo é manual, por `workflow_dispatch`).
+
+Parada de emergência: `LN_EMERGENCY_STOP=1` faz o `guard` falhar, e nada roda depois dele.

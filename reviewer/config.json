@@ -1,0 +1,18 @@
+{
+  "prompt_version": "ln-review/1",
+  "prompt_file": "reviewer/prompt-v1.md",
+  "openrouter_base_url": "https://openrouter.ai",
+  "model": "openai/gpt-6.1-terra",
+  "accepted_models": ["openai/gpt-6.1-terra", "openai/gpt-6.1-terra-20261026"],
+  "provider_order": ["openai"],
+  "accepted_provider_names": ["OpenAI"],
+  "reviewer_provider": "openai",
+  "price_usd_per_mtok": {"input": 1.0, "output": 5.0},
+  "price_source": "GET https://openrouter.ai/api/v1/models (publico, sem chave), 23/11/2026; igual a model.policy DP-02 v5 'openai-text-review'",
+  "max_prompt_chars": 60000,
+  "max_tokens": 4000,
+  "max_cost_usd_per_call": 0.06,
+  "generation_lookup_retries": 6,
+  "generation_lookup_wait_sec": 5,
+  "_nota": "Chamada so via OpenRouter, roteada so para a OpenAI (provider.only + allow_fallbacks=false, data_collection=deny). Muda so por commit assinado pela raiz. Custo estimado ANTES da chamada; acima do teto a chamada nao sai (falha fechada)."
+}
