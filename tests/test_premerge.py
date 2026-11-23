@@ -233,6 +233,20 @@ class PreMerge(base.R006):
         trust = json.loads((V / 'trust.json').read_text(encoding='utf-8'))
         self.assertEqual(trust['runner_policy_sha256'], hashlib.sha256((V / 'checks' / 'r0-policy.json').read_bytes()).hexdigest())
 
+    def test_p09_dispatch_manual_modo_pr(self):
+        # 23/11: o agendamento nao dispara; o dono do repo dispara o status pre-merge (task=PR, mode=pr, target=H) pelo mesmo caminho do 'pr'
+        y = (V / '.github' / 'workflows' / 'verifier.yml').read_text(encoding='utf-8')
+        self.assertIn('options: [premerge, accept, pr]', y)
+        disc = y[y.index('  discover:\n'):y.index('  fetch:\n')]
+        pr_blk = disc[disc.index('if [ "$IN_MODE" = "pr" ]; then'):disc.index('            else\n')]
+        self.assertIn('[ "$IN_TASK" = "PR" ] ||', pr_blk)
+        self.assertIn("printf 'task=PR\\ntarget=%s\\nmode=pr\\nrun=true\\n' \"$IN_TARGET\"", pr_blk)
+        self.assertLess(disc.index('[[ "$IN_TARGET" =~ ^[0-9a-f]{40}$ ]]'), disc.index('if [ "$IN_MODE" = "pr" ]; then'))   # target validado antes dos dois ramos
+        self.assertNotIn('accept', pr_blk.split('#', 1)[0] + pr_blk.split('\n', 2)[2])                                    # o ramo pr nunca produz accept
+        self.assertIn('[[ "$IN_MODE" =~ ^(accept|premerge)$ ]]', disc)                                                      # ramo antigo intacto
+        self.assertIn('pulls?state=open', pr_blk)                                                                         # target = head de PR aberto
+        self.assertIn("target nao e head de PR aberto'; exit 1", pr_blk)
+
 
 for _n in [n for n in dir(base.R006) if n.startswith('test_')]:
     setattr(PreMerge, _n, None)

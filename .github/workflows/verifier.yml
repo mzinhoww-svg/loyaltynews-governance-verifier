@@ -8,9 +8,9 @@ on:
     - cron: "11,41 * * * *"   # fora de :00/:30; autor do commit = conta do proprietario (ator do agendamento; docs GitHub)
   workflow_dispatch:
     inputs:
-      task:   {description: "ID da tarefa ou gate (ex.: R0-05)", required: true, type: string}
+      task:   {description: "ID da tarefa ou gate (ex.: R0-05); PR com mode=pr", required: true, type: string}
       target: {description: "SHA alvo (H no pre-merge, M no aceite)", required: true, type: string}
-      mode:   {description: "premerge | accept", required: true, type: choice, options: [premerge, accept]}
+      mode:   {description: "premerge | accept | pr (status pre-merge de PR: task=PR, target=head do PR)", required: true, type: choice, options: [premerge, accept, pr]}
 permissions: {}
 concurrency:
   group: ln-verifier
@@ -92,10 +92,19 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [ "$GH_EVENT" = "workflow_dispatch" ]; then
-            [[ "$IN_TASK" =~ ^R[0-6]-[0-9]{2}$ ]] || { echo 'task invalida (use o id completo, ex.: R0-05 ou R0-12)'; exit 1; }
             [[ "$IN_TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo 'target invalido'; exit 1; }
-            [[ "$IN_MODE" =~ ^(accept|premerge)$ ]] || { echo 'mode invalido'; exit 1; }
-            printf 'task=%s\ntarget=%s\nmode=%s\nrun=true\n' "$IN_TASK" "$IN_TARGET" "$IN_MODE" >> "$GITHUB_OUTPUT"
+            if [ "$IN_MODE" = "pr" ]; then
+              # status pre-merge manual (so quem pode disparar o workflow): mesmo caminho do modo 'pr' agendado; reviewer e signer pulados, nunca aceite
+              [ "$IN_TASK" = "PR" ] || { echo 'mode=pr exige task=PR'; exit 1; }
+              # target tem de ser o head de um PR ABERTO do produto (API publica); senao o discover falha e nada e postado
+              curl -sSfL -H "Authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/${PRODUCT_REPO}/pulls?state=open&per_page=100" > prs.json
+              python3 -I -c 'import json,sys; t=sys.argv[1]; d=json.load(open("prs.json")); sys.exit(0 if any(p["head"]["sha"]==t for p in d) else 1)' "$IN_TARGET" || { echo 'target nao e head de PR aberto'; exit 1; }
+              printf 'task=PR\ntarget=%s\nmode=pr\nrun=true\n' "$IN_TARGET" >> "$GITHUB_OUTPUT"
+            else
+              [[ "$IN_TASK" =~ ^R[0-6]-[0-9]{2}$ ]] || { echo 'task invalida (use o id completo, ex.: R0-05 ou R0-12)'; exit 1; }
+              [[ "$IN_MODE" =~ ^(accept|premerge)$ ]] || { echo 'mode invalido'; exit 1; }
+              printf 'task=%s\ntarget=%s\nmode=%s\nrun=true\n' "$IN_TASK" "$IN_TARGET" "$IN_MODE" >> "$GITHUB_OUTPUT"
+            fi
           else
             # agendado: descoberta (02 v3 par.2) sem credencial; um alvo por execucao; nada e assinado aqui
             git clone -q --no-checkout "https://github.com/${PRODUCT_REPO}.git" product
