@@ -77,6 +77,29 @@ class Pacote(unittest.TestCase):
         self.assertIn('sha256 NAO CONFERE', pkg)
         self.assertIn('[AUSENTE NO COMMIT ALVO]', pkg)
 
+    def test_06_secao_de_decisoes_respeita_o_teto_estrito(self):
+        # 24/11 (nota QA 6): o aviso de corte cabe DENTRO de max_decisions_chars
+        cfg = dict(CFG, max_decisions_chars=500)
+        decs = [{'id': 'DP-44', 'escolha': 'Q' * 3000}]
+        h = self.commit({'inv.md': 'risco aceito pela DP-44'}, decs)
+        pkg = review.build_package(self.repo, h, 'R0-01', {'tests': []}, cfg)
+        head = '## Decisoes citadas (governance/decisions.yaml no commit alvo)\n'
+        sec = pkg.split(head, 1)[1].split('\n\n## ', 1)[0]
+        self.assertLessEqual(len(sec), 500)
+        self.assertIn('[TRUNCADO:', sec)
+        self.assertEqual(CFG['max_decisions_chars'], 20000)   # o teto vem do config (nao mais de um padrao no codigo)
+
+    def test_07_decisions_ausente_ou_id_sem_entrada_e_dito_no_pacote(self):
+        # 24/11 (nota QA 6): sem decisions.yaml legivel, o pacote avisa em vez de omitir em silencio
+        h = self.commit({'inv.md': 'risco aceito pela DP-44'}, [])
+        (self.repo / 'governance' / 'decisions.yaml').write_text('{nao e json', encoding='utf-8')
+        git(self.repo, 'add', '-A'); git(self.repo, 'commit', '-q', '-m', 'decisions invalido')
+        pkg = review.build_package(self.repo, git(self.repo, 'rev-parse', 'HEAD'), 'R0-01', {'tests': []}, CFG)
+        self.assertIn('[governance/decisions.yaml AUSENTE OU INVALIDO no commit alvo; ids citados: DP-44]', pkg)
+        h = self.commit({'inv.md': 'DP-44 e DP-46'}, [{'id': 'DP-44', 'escolha': 'x'}])
+        pkg = review.build_package(self.repo, h, 'R0-01', {'tests': []}, CFG)
+        self.assertIn('[ids citados sem entrada no decisions.yaml: DP-46]', pkg)
+
     def test_05_water_fill(self):
         self.assertEqual(review._water_fill({1: 10, 2: 100, 3: 1000}, 2000), {1: 10, 2: 100, 3: 1000})
         self.assertEqual(review._water_fill({1: 10, 2: 1000, 3: 1000}, 610), {1: 10, 2: 300, 3: 300})

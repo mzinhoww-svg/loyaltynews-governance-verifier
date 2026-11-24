@@ -16,6 +16,8 @@ Faz, em ordem, falhando fechado:
  6. confere em /api/v1/generation: provider_name aceito, model igual ao da resposta e na lista aceita;
  7. assina a tag review/<T>/<alvo> com a chave do revisor e exporta o objeto (review-tag.txt) para o assinador.
 Log publico: so provider, modelo, id da geracao, versao do prompt, custo e decisao. Nunca o prompt nem a resposta.
+A TAG review/ (24/11, DP-45) grava tambem criterios[] (atendido + justificativa), problemas e resumo, com teto por campo e
+padroes de credencial redigidos: e o registro auditavel que o accept-override exige.
 """
 import argparse
 import hashlib
@@ -79,6 +81,15 @@ def show(repo, target, path):
 
 
 DEC_ID = re.compile(r'\b(DP-\d{2,3}|D\d{2})\b')
+MAX_ITEMS = 24
+SECRET = re.compile(r'(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}'
+                    r'|xox[abprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----)')
+
+
+def clip(s, n):
+    """Texto do parecer para a tag: string, padroes de credencial redigidos, teto de n caracteres (com aviso)."""
+    s = SECRET.sub('[REDIGIDO]', s if isinstance(s, str) else '')
+    return s if len(s) <= n else s[:n - 12] + ' [CORTADO]'
 
 
 def _water_fill(lens, avail):
@@ -132,18 +143,30 @@ def build_package(repo, target, task, report, cfg):
     cited = ' '.join([json.dumps(evidences, ensure_ascii=False)] + [x[4] for x in arts if x[4]])
     ids = sorted(set(DEC_ID.findall(cited)))
     dec_raw = show(repo, target, 'governance/decisions.yaml') if ids else None
-    if dec_raw is not None:
-        try:
-            decs = json.loads(dec_raw.decode('utf-8'))
-        except ValueError:
-            decs = []
-        sel = [d for d in decs if isinstance(d, dict) and d.get('id') in ids]
-        if sel:
+    dec_head = '## Decisoes citadas (governance/decisions.yaml no commit alvo)\n'
+    if ids:
+        decs = None
+        if dec_raw is not None:
+            try:
+                decs = json.loads(dec_raw.decode('utf-8'))
+            except ValueError:
+                decs = None
+        if not isinstance(decs, list):
+            # 24/11 (nota QA 6): sem decisions.yaml legivel o pacote DIZ isso, em vez de omitir em silencio
+            log('aviso: decisoes citadas, mas governance/decisions.yaml ausente ou invalido no alvo')
+            parts.append(dec_head + f"[governance/decisions.yaml AUSENTE OU INVALIDO no commit alvo; ids citados: {', '.join(ids)}]")
+        else:
+            sel = [d for d in decs if isinstance(d, dict) and d.get('id') in ids]
+            miss = [x for x in ids if x not in {d.get('id') for d in sel}]
             dtxt = json.dumps(sel, ensure_ascii=False, indent=1)
-            cap = int(cfg.get('max_decisions_chars', 12000))
+            if miss:
+                dtxt += f"\n[ids citados sem entrada no decisions.yaml: {', '.join(miss)}]"
+            cap = int(cfg['max_decisions_chars'])
             if len(dtxt) > cap:
-                dtxt = dtxt[:cap] + f'\n[TRUNCADO: {len(dtxt)} caracteres no total]'
-            parts.append('## Decisoes citadas (governance/decisions.yaml no commit alvo)\n' + dtxt)
+                # 24/11 (nota QA 6): teto estrito, o aviso cabe dentro do teto
+                mark = f'\n[TRUNCADO: {len(dtxt)} caracteres no total]'
+                dtxt = dtxt[:max(0, cap - len(mark))] + mark
+            parts.append(dec_head + dtxt)
     tail = ['## Relatorio do runner limpo\n' + json.dumps(report, ensure_ascii=False, indent=1)]
     parents = git(repo, 'rev-list', '--parents', '-n', '1', target).stdout.decode().split()
     if len(parents) >= 2:
@@ -275,6 +298,12 @@ def main():
             'runner_report_sha256': sha256(canon(report)), 'total_cost': gen.get('total_cost'),
             'criterios_atendidos': sum(1 for c in verdict['criterios'] if c.get('atendido') is True),
             'criterios_total': len(verdict['criterios']),
+            # 24/11 (DP-45): justificativas gravadas na tag, para conferir se a recusa e SO por ponto coberto por DP registrada.
+            # Texto do modelo sobre artefatos publicos; com teto por campo e redacao de padroes de credencial.
+            'criterios': [{'criterio': clip(c.get('criterio'), 600), 'atendido': c.get('atendido') is True,
+                           'justificativa': clip(c.get('justificativa'), 1500)} for c in verdict['criterios'][:MAX_ITEMS]],
+            'problemas': [clip(x, 800) for x in (verdict.get('problemas') or [])[:MAX_ITEMS]],
+            'resumo': clip(verdict.get('resumo'), 2000),
             'em': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
         }
         sign_tag(repo, kr, fpr, name, a.target, payload, ('Loyalty Reviewer', 'reviewer@loyalty.invalid'))

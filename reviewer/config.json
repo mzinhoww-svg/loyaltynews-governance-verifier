@@ -10,6 +10,7 @@
   "price_usd_per_mtok": {"input": 1.0, "output": 5.0},
   "price_source": "GET https://openrouter.ai/api/v1/models (publico, sem chave), 23/11/2026; igual a model.policy DP-02 v5 'openai-text-review'",
   "max_prompt_chars": 60000,
+  "max_decisions_chars": 20000,
   "supported_parameters": ["max_tokens", "response_format", "structured_outputs", "seed", "reasoning", "include_reasoning", "reasoning_effort", "verbosity", "tools", "tool_choice"],
   "supported_parameters_source": "GET https://openrouter.ai/api/v1/models/openai/gpt-6.1-terra/endpoints (publico, sem chave), 23/11/2026: endpoints OpenAI; sem temperature",
   "max_tokens": 4000,

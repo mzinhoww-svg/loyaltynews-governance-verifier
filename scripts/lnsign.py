@@ -32,8 +32,24 @@ def git(repo, *args, env=None, check=True, inp=None):
     p = subprocess.run(['git', '-C', str(repo), '-c', 'core.hooksPath=' + os.devnull, *args],
                        capture_output=True, env=e, input=inp)
     if check and p.returncode:
-        raise SignError('git ' + ' '.join(args[:2]) + ': ' + p.stderr.decode(errors='replace').strip()[:300])
+        raise SignError('git ' + ' '.join(args[:2]) + ': ' + git_err(p.stderr))
     return p
+
+
+# 24/11 (Verifier Ops + Security): o corte em [:300] escondia o motivo do "[remote rejected] ... (<motivo>)" (task/R0-01/rejected).
+# Guarda o inicio, as linhas de diagnostico INTEIRAS (rejected/error/fatal/hint/"!") e o fim; teto total de 1500, o fim sempre preservado.
+# Sem segredo: o token vai so no extraheader (env), nunca na URL nem no stderr do git.
+_GIT_DIAG = re.compile(r'(^\s*!|rejected|error|fatal|hint|declined|denied)', re.I)
+
+
+def git_err(raw, cap=1500):
+    s = raw.decode(errors='replace').strip()
+    if len(s) <= cap:
+        return s
+    head, tail, sep = s[:200], s[-400:], ' [...] '
+    diag = ' | '.join(ln.strip() for ln in s.splitlines() if _GIT_DIAG.search(ln))
+    room = max(0, cap - len(head) - len(tail) - 2 * len(sep))
+    return head + sep + diag[:room] + sep + tail
 
 
 class Keyring:

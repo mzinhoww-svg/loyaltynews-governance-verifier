@@ -236,16 +236,40 @@ class PreMerge(base.R006):
     def test_p09_dispatch_manual_modo_pr(self):
         # 23/11: o agendamento nao dispara; o dono do repo dispara o status pre-merge (task=PR, mode=pr, target=H) pelo mesmo caminho do 'pr'
         y = (V / '.github' / 'workflows' / 'verifier.yml').read_text(encoding='utf-8')
-        self.assertIn('options: [premerge, accept, pr]', y)
+        self.assertIn('options: [premerge, accept, pr, accept-override]', y)   # 24/11: + accept-override (DP-45)
         disc = y[y.index('  discover:\n'):y.index('  fetch:\n')]
-        pr_blk = disc[disc.index('if [ "$IN_MODE" = "pr" ]; then'):disc.index('            else\n')]
+        pr_blk = disc[disc.index('elif [ "$IN_MODE" = "pr" ]; then'):disc.index('            else\n')]
         self.assertIn('[ "$IN_TASK" = "PR" ] ||', pr_blk)
         self.assertIn("printf 'task=PR\\ntarget=%s\\nmode=pr\\nrun=true\\n' \"$IN_TARGET\"", pr_blk)
-        self.assertLess(disc.index('[[ "$IN_TARGET" =~ ^[0-9a-f]{40}$ ]]'), disc.index('if [ "$IN_MODE" = "pr" ]; then'))   # target validado antes dos dois ramos
+        self.assertLess(disc.index('[[ "$IN_TARGET" =~ ^[0-9a-f]{40}$ ]]'), disc.index('elif [ "$IN_MODE" = "pr" ]; then'))   # target validado antes dos ramos
         self.assertNotIn('accept', pr_blk.split('#', 1)[0] + pr_blk.split('\n', 2)[2])                                    # o ramo pr nunca produz accept
         self.assertIn('[[ "$IN_MODE" =~ ^(accept|premerge)$ ]]', disc)                                                      # ramo antigo intacto
         self.assertIn('pulls?state=open', pr_blk)                                                                         # target = head de PR aberto
         self.assertIn("target nao e head de PR aberto'; exit 1", pr_blk)
+
+    def test_p10_dispatch_accept_override(self):
+        # 24/11 (DP-45): accept-override so por dispatch, com dp e override validados; sem LLM; assinatura no ambiente verifier-signing
+        y = (V / '.github' / 'workflows' / 'verifier.yml').read_text(encoding='utf-8')
+        disc = y[y.index('  discover:\n'):y.index('  fetch:\n')]
+        self.assertIn('''if [ "$IN_MODE" != "accept-override" ] && { [ -n "$IN_DP" ] || [ -n "$IN_OVERRIDE" ]; }; then echo 'dp/override so no mode=accept-override'; exit 1; fi''', disc)
+        ov = disc[disc.index('if [ "$IN_MODE" = "accept-override" ]; then'):disc.index('elif [ "$IN_MODE" = "pr" ]; then')]
+        self.assertIn('[[ "$IN_DP" =~ ^(DP-[0-9]{2,3}|D[0-9]{2})(,(DP-[0-9]{2,3}|D[0-9]{2}))*$ ]]', ov)
+        self.assertIn('[[ ${#IN_OVERRIDE} -le 40000 && "$IN_OVERRIDE" =~ ^[A-Za-z0-9+/]+=*\\.[A-Za-z0-9+/]+=*$ ]]', ov)
+        self.assertIn("mode=accept-override\\nrun=true", ov)
+        sched = disc[disc.index('# agendado:'):]
+        self.assertNotIn('accept-override', sched)                                                   # o agendamento nunca produz override
+        jobs = {n: y[y.index(f'  {n}:\n'):] for n in ('reviewer', 'signer', 'override')}
+        for n in ('reviewer', 'signer'):
+            self.assertIn("needs.discover.outputs.mode != 'accept-override'", jobs[n].split('\n')[2])   # revisor e assinador normais pulados
+        job = jobs['override'][:jobs['override'].index('  pr-status:\n')]
+        self.assertIn("if: needs.discover.outputs.mode == 'accept-override'", job)
+        self.assertIn('needs: [trust-gate, discover, runner]', job)                                  # runner limpo desta execucao
+        self.assertIn('environment: verifier-signing', job)
+        self.assertNotIn('OPENROUTER', job)                                                           # o modelo nao e chamado de novo
+        self.assertNotIn('REVIEWER_GPG', job)
+        self.assertIn('provenance.py', job)
+        self.assertIn('--mode accept-override', job)
+        self.assertNotIn('${{', ''.join(l for l in job.split('\n') if l.strip().startswith(('[[', 'python3', 'git ', 'printf'))))   # entradas so por env
 
 
 for _n in [n for n in dir(base.R006) if n.startswith('test_')]:

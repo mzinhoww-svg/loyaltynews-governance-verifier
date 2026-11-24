@@ -10,7 +10,9 @@ on:
     inputs:
       task:   {description: "ID da tarefa ou gate (ex.: R0-05); PR com mode=pr", required: true, type: string}
       target: {description: "SHA alvo (H no pre-merge, M no aceite)", required: true, type: string}
-      mode:   {description: "premerge | accept | pr (status pre-merge de PR: task=PR, target=head do PR)", required: true, type: choice, options: [premerge, accept, pr]}
+      mode:   {description: "premerge | accept | pr (status pre-merge de PR: task=PR, target=head do PR) | accept-override (DP-45)", required: true, type: choice, options: [premerge, accept, pr, accept-override]}
+      dp:       {description: "so accept-override: DPs citadas, ordenadas, separadas por virgula (ex.: DP-33,DP-44)", required: false, type: string, default: ""}
+      override: {description: "so accept-override: <doc_b64>.<sig_b64> (autorizacao ln-override/1 assinada pela RAIZ)", required: false, type: string, default: ""}
 permissions: {}
 concurrency:
   group: ln-verifier
@@ -89,11 +91,20 @@ jobs:
           IN_TASK: ${{ inputs.task }}
           IN_TARGET: ${{ inputs.target }}
           IN_MODE: ${{ inputs.mode }}
+          IN_DP: ${{ inputs.dp }}
+          IN_OVERRIDE: ${{ inputs.override }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [ "$GH_EVENT" = "workflow_dispatch" ]; then
             [[ "$IN_TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo 'target invalido'; exit 1; }
-            if [ "$IN_MODE" = "pr" ]; then
+            # dp/override so existem no accept-override (DP-45); em qualquer outro modo, presentes => recusa
+            if [ "$IN_MODE" != "accept-override" ] && { [ -n "$IN_DP" ] || [ -n "$IN_OVERRIDE" ]; }; then echo 'dp/override so no mode=accept-override'; exit 1; fi
+            if [ "$IN_MODE" = "accept-override" ]; then
+              [[ "$IN_TASK" =~ ^R[0-6]-[0-9]{2}$ ]] || { echo 'task invalida'; exit 1; }
+              [[ "$IN_DP" =~ ^(DP-[0-9]{2,3}|D[0-9]{2})(,(DP-[0-9]{2,3}|D[0-9]{2}))*$ ]] || { echo 'accept-override exige dp=DP-NN[,DP-NN] (recusado)'; exit 1; }
+              [[ ${#IN_OVERRIDE} -le 40000 && "$IN_OVERRIDE" =~ ^[A-Za-z0-9+/]+=*\.[A-Za-z0-9+/]+=*$ ]] || { echo 'accept-override exige override=<doc_b64>.<sig_b64> (recusado)'; exit 1; }
+              printf 'task=%s\ntarget=%s\nmode=accept-override\nrun=true\n' "$IN_TASK" "$IN_TARGET" >> "$GITHUB_OUTPUT"
+            elif [ "$IN_MODE" = "pr" ]; then
               # status pre-merge manual (so quem pode disparar o workflow): mesmo caminho do modo 'pr' agendado; reviewer e signer pulados, nunca aceite
               [ "$IN_TASK" = "PR" ] || { echo 'mode=pr exige task=PR'; exit 1; }
               # target tem de ser o head de um PR ABERTO do produto (API publica); senao o discover falha e nada e postado
@@ -187,7 +198,7 @@ jobs:
 
   reviewer:
     needs: [trust-gate, discover, runner]
-    if: needs.discover.outputs.mode != 'pr'
+    if: needs.discover.outputs.mode != 'pr' && needs.discover.outputs.mode != 'accept-override'
     runs-on: ubuntu-latest
     environment: reviewer
     permissions: {contents: read}
@@ -219,7 +230,7 @@ jobs:
 
   signer:
     needs: [trust-gate, discover, runner, reviewer]
-    if: needs.discover.outputs.mode != 'pr'
+    if: needs.discover.outputs.mode != 'pr' && needs.discover.outputs.mode != 'accept-override'
     runs-on: ubuntu-latest
     environment: verifier-signing
     permissions: {contents: read, actions: read}
@@ -270,6 +281,64 @@ jobs:
           python3 -I -B trusted/scripts/signer.py --product /tmp/product --target "$TARGET" --task "$TASK" --mode "$MODE" \
             --trust trusted/trust.json --policy trusted/checks/r0-policy.json --runner-report report/runner-report.json \
             --review-tag review/review-tag.txt --review-meta review/review-meta.json \
+            --push-url "https://github.com/${PRODUCT_REPO}.git"
+
+  override:
+    # DP-45 (24/11): aceite quando o revisor recusou SO por ponto coberto por DP registrada. Sem LLM: usa o parecer contrario
+    # EXISTENTE (review/<T>/<alvo>). Exige runner limpo aprovado NESTA execucao, autorizacao assinada pela RAIZ (conferida pelo
+    # kit com keys/raiz.asc) e as DPs no decisions.yaml do alvo. Recusa = nada assinado, nada empurrado.
+    needs: [trust-gate, discover, runner]
+    if: needs.discover.outputs.mode == 'accept-override'
+    runs-on: ubuntu-latest
+    environment: verifier-signing
+    permissions: {contents: read, actions: read}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ needs.trust-gate.outputs.verified_sha }}", path: trusted, persist-credentials: false}
+      - name: Baixar ZIP do relatorio pela API e validar proveniencia
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUNNER_ARTIFACT_ID: ${{ needs.runner.outputs.artifact-id }}
+          TARGET: ${{ needs.discover.outputs.target }}
+          TASK: ${{ needs.discover.outputs.task }}
+        run: |
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^R[0-6]-[0-9]{2}$ && "$RUNNER_ARTIFACT_ID" =~ ^[0-9]+$ ]] || exit 1
+          curl -sSfL -H "Authorization: Bearer $GITHUB_TOKEN" -o report.zip \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${RUNNER_ARTIFACT_ID}/zip"
+          python3 trusted/scripts/provenance.py report.zip trusted/trust.json trusted/checks/r0-policy.json "$TARGET" "$TASK"
+      - name: Token da App LN Verifier
+        id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.LN_VERIFIER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LN_VERIFIER_APP_PRIVATE_KEY }}
+          owner: mzinhoww-svg
+          repositories: loyaltynews
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: product-bundle}
+      - name: Conferir a autorizacao da raiz e assinar o aceite com override (so refs validadas)
+        env:
+          VERIFIER_GPG_PRIVATE_KEY: ${{ secrets.VERIFIER_GPG_PRIVATE_KEY }}
+          VERIFIER_GPG_PASSPHRASE: ${{ secrets.VERIFIER_GPG_PASSPHRASE }}
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          TARGET: ${{ needs.discover.outputs.target }}
+          TASK: ${{ needs.discover.outputs.task }}
+          IN_DP: ${{ inputs.dp }}
+          IN_OVERRIDE: ${{ inputs.override }}
+        run: |
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ && "$TASK" =~ ^R[0-6]-[0-9]{2}$ ]] || exit 1
+          [[ "$IN_DP" =~ ^(DP-[0-9]{2,3}|D[0-9]{2})(,(DP-[0-9]{2,3}|D[0-9]{2}))*$ ]] || exit 1
+          [[ ${#IN_OVERRIDE} -le 40000 && "$IN_OVERRIDE" =~ ^[A-Za-z0-9+/]+=*\.[A-Za-z0-9+/]+=*$ ]] || exit 1
+          printf '%s' "$IN_OVERRIDE" > /tmp/override.txt
+          sha256sum -c product.bundle.sha256
+          git clone -q product.bundle /tmp/product
+          git -C /tmp/product fetch -q origin 'refs/tags/*:refs/tags/*'   # tags do bundle (inclui o parecer contrario existente)
+          git -C /tmp/product -c core.hooksPath=/dev/null checkout -q --detach "$TARGET"
+          printf '* -text\n' > /tmp/product/.git/info/attributes
+          unzip -o -q report.zip -d report
+          python3 -I -B trusted/scripts/signer.py --product /tmp/product --target "$TARGET" --task "$TASK" --mode accept-override \
+            --trust trusted/trust.json --policy trusted/checks/r0-policy.json --runner-report report/runner-report.json \
+            --override-file /tmp/override.txt --dp "$IN_DP" \
             --push-url "https://github.com/${PRODUCT_REPO}.git"
 
   pr-status:
