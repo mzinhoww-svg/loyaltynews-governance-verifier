@@ -31,6 +31,18 @@ def main():
                 errors.append(f'{repo}: ruleset ausente {name}')
             elif api(f'/repos/{repo}/rulesets/{active[name]["id"]}').get('enforcement') != 'active':
                 errors.append(f'{repo}: ruleset {name} nao ativo')
+        for name, checks in (want.get('required_status_checks') or {}).items():
+            # 23/11: o ruleset de checks obrigatorios nao pode sumir NEM ser enfraquecido (contexto a menos ou de outro app)
+            if name not in active:
+                errors.append(f'{repo}: ruleset ausente {name}')
+                continue
+            rs = api(f'/repos/{repo}/rulesets/{active[name]["id"]}')
+            got = [c for r in rs.get('rules', []) if r.get('type') == 'required_status_checks'
+                   for c in (r.get('parameters') or {}).get('required_status_checks', [])]
+            have = {(c.get('context'), c.get('integration_id')) for c in got}
+            for c in checks:
+                if (c['context'], c['integration_id']) not in have:
+                    errors.append(f"{repo}: {name} sem o check {c['context']} da App {c['integration_id']}")
         for name in want.get('rulesets_disabled', []):
             if name in active and api(f'/repos/{repo}/rulesets/{active[name]["id"]}').get('enforcement') == 'active':
                 errors.append(f'{repo}: {name} ATIVO (parada de emergencia acionada?)')

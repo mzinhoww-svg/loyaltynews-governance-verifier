@@ -78,6 +78,25 @@ def show(repo, target, path):
     return None if p.returncode else p.stdout
 
 
+DEC_ID = re.compile(r'\b(DP-\d{2,3}|D\d{2})\b')
+
+
+def _water_fill(lens, avail):
+    """Divide `avail` caracteres entre artefatos: os menores entram inteiros, o que sobra e dividido igualmente entre os maiores."""
+    alloc, pend, rest = {}, sorted(lens, key=lambda k: lens[k]), max(0, avail)
+    while pend:
+        share = rest // len(pend)
+        if lens[pend[0]] <= share:
+            k = pend.pop(0)
+            alloc[k] = lens[k]
+            rest -= lens[k]
+        else:
+            for k in pend:
+                alloc[k] = share
+            break
+    return alloc
+
+
 def build_package(repo, target, task, report, cfg):
     backlog = json.loads(show(repo, target, 'governance/backlog.yaml').decode('utf-8'))
     tasks = {t['id']: t for t in backlog}
@@ -96,26 +115,57 @@ def build_package(repo, target, task, report, cfg):
         evidences[j] = json.loads(raw.decode('utf-8'))
     for j, ev in evidences.items():
         parts.append(f'## Evidencia {j}\n' + json.dumps(ev, ensure_ascii=False, indent=1))
-    per_art = max(2000, budget // max(1, 2 * sum(len(ev.get('artefatos', [])) for ev in evidences.values())))
+    # artefatos: lidos uma vez; texto decodificado (ou marcador de binario/ausente)
+    arts = []
     for j, ev in evidences.items():
         for a in ev.get('artefatos', []):
             blob = show(repo, target, a['caminho'])
-            if blob is None:
-                parts.append(f"## Artefato {a['caminho']} ({j})\n[AUSENTE NO COMMIT ALVO]")
-                continue
-            okh = sha256(blob) == a.get('sha256')
-            try:
-                txt = blob.decode('utf-8')
-                body = txt if len(txt) <= per_art else txt[:per_art] + f'\n[TRUNCADO: {len(txt)} caracteres no total]'
-            except UnicodeDecodeError:
-                body = f'[binario, {len(blob)} bytes]'
-            parts.append(f"## Artefato {a['caminho']} ({j}) sha256 {'confere' if okh else 'NAO CONFERE'}\n{body}")
-    parts.append('## Relatorio do runner limpo\n' + json.dumps(report, ensure_ascii=False, indent=1))
+            okh = blob is not None and sha256(blob) == a.get('sha256')
+            txt = None
+            if blob is not None:
+                try:
+                    txt = blob.decode('utf-8')
+                except UnicodeDecodeError:
+                    txt = None
+            arts.append((j, a['caminho'], blob, okh, txt))
+    # 23/11: decisoes citadas pela evidencia ou pelos artefatos entram no pacote (governance/decisions.yaml do commit alvo)
+    cited = ' '.join([json.dumps(evidences, ensure_ascii=False)] + [x[4] for x in arts if x[4]])
+    ids = sorted(set(DEC_ID.findall(cited)))
+    dec_raw = show(repo, target, 'governance/decisions.yaml') if ids else None
+    if dec_raw is not None:
+        try:
+            decs = json.loads(dec_raw.decode('utf-8'))
+        except ValueError:
+            decs = []
+        sel = [d for d in decs if isinstance(d, dict) and d.get('id') in ids]
+        if sel:
+            dtxt = json.dumps(sel, ensure_ascii=False, indent=1)
+            cap = int(cfg.get('max_decisions_chars', 12000))
+            if len(dtxt) > cap:
+                dtxt = dtxt[:cap] + f'\n[TRUNCADO: {len(dtxt)} caracteres no total]'
+            parts.append('## Decisoes citadas (governance/decisions.yaml no commit alvo)\n' + dtxt)
+    tail = ['## Relatorio do runner limpo\n' + json.dumps(report, ensure_ascii=False, indent=1)]
     parents = git(repo, 'rev-list', '--parents', '-n', '1', target).stdout.decode().split()
     if len(parents) >= 2:
         stat = git(repo, 'diff', '--stat', parents[1], target).stdout.decode()
-        parts.append('## Mudancas do commit alvo (diff --stat contra o primeiro pai)\n' + stat[:4000])
-    pkg = '\n\n'.join(parts)
+        tail.append('## Mudancas do commit alvo (diff --stat contra o primeiro pai)\n' + stat[:4000])
+    # 23/11: orcamento dos artefatos = teto - partes fixas; menores inteiros, so o excedente dos maiores e cortado (com aviso)
+    head_of = lambda x: f"## Artefato {x[1]} ({x[0]}) sha256 {'confere' if x[3] else 'NAO CONFERE'}\n"
+    fixed = len('\n\n'.join(parts + tail)) + sum(len(head_of(x)) + 2 for x in arts) + 400
+    lens = {i: len(x[4]) for i, x in enumerate(arts) if x[4] is not None}
+    alloc = _water_fill(lens, budget - fixed)
+    for i, x in enumerate(arts):
+        j, path, blob, okh, txt = x
+        if blob is None:
+            parts.append(f"## Artefato {path} ({j})\n[AUSENTE NO COMMIT ALVO]")
+            continue
+        if txt is None:
+            body = f'[binario, {len(blob)} bytes]'
+        else:
+            lim = alloc.get(i, 0)
+            body = txt if len(txt) <= lim else txt[:lim] + f'\n[TRUNCADO: {len(txt)} caracteres no total; mostrados {lim}]'
+        parts.append(head_of(x) + body)
+    pkg = '\n\n'.join(parts + tail)
     if len(pkg) > budget:
         pkg = pkg[:budget] + f'\n[PACOTE TRUNCADO NO TETO DE {budget} CARACTERES]'
     return pkg

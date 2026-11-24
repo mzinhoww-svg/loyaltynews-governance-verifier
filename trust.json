@@ -1,7 +1,7 @@
 {
   "status": "configured",
   "root_fingerprint": "1D4A3E263898E5B0C0590FD7A2A2BB73C4C84309",
-  "baseline_commit": "151c26358c47a51132a0b2716e7d1d03b66b9015",
+  "baseline_commit": "e4d1c6b1fd593985f1c9ae116e08310076d97cf1",
   "executor": {"fingerprint": "E842D7C1ECA0045D3D7BBFEA47D7C1BC57FD351B", "provider": "anthropic"},
   "reviewer": {"fingerprint": "BA00DAC46FE7488272BC4F6A72099676E263421D", "provider": "openai"},
   "verifier": {"fingerprint": "7B4BEE2FE4D42B297A583AF9100957DE6F761D6A"},
@@ -37,8 +37,9 @@
       "mzinhoww-svg/loyaltynews": {
         "visibility": "public",
         "default_branch": "main",
-        "rulesets_active": ["main-protection", "tags-acceptance", "tags-release", "tags-baseline", "tags-other"],
-        "rulesets_disabled": ["emergency-freeze-branches", "emergency-freeze-tags"]
+        "rulesets_active": ["main-protection", "tags-acceptance", "tags-release", "tags-baseline", "tags-other", "main-required-checks"],
+        "rulesets_disabled": ["emergency-freeze-branches", "emergency-freeze-tags"],
+        "required_status_checks": {"main-required-checks": [{"context": "ln-verifier/protected-paths", "integration_id": 5880659}, {"context": "ln-verifier/clean-checks", "integration_id": 5880659}]}
       },
       "mzinhoww-svg/loyaltynews-governance-verifier": {
         "visibility": "public",
