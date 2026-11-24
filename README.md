@@ -42,3 +42,7 @@ Estado: implementado na branch `r0-06/revisor-assinador`, com testes locais 15/1
 Testes no Windows: GnuPG nativo na frente do PATH e `gpg.program` do git apontando para ele (por exemplo `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=gpg.program`, `GIT_CONFIG_VALUE_0=C:/Program Files/GnuPG/bin/gpg.exe`).
 
 Parada de emergência: `LN_EMERGENCY_STOP=1` faz o `guard` falhar, e nada roda depois dele.
+
+## Mudanças protegidas no produto autorizadas por ato raiz
+Arquivos em caminho protegido do produto (`trust.json`, `protected`) só entram por commit assinado pela raiz, que vira o novo `baseline_commit`.
+- **G3 (24/11/2026): `.github/workflows/web-prebuilt.yml`** (blob `93741d1ee73a5210267caf2b72edc5cd004e1643`, de `15f9cbaa9e98ac216c4a4dbdc2ecc24a6589276a`). Constrói o `.next` do web fora da Vertra, sob demanda (`workflow_dispatch`), com `contents: read`, sem segredos, `persist-credentials: false` e 3 actions fixadas por SHA; com perfil `production`, recusa antes do build o commit que não for ancestral de `origin/main` (decisão (a) do PM). Cerimônia: `r0-preparacao/R0-03/bootstrap/CERIMONIA-G3-PREBUILT.md`; código revisado pelo QA 5 (`qa/ft-infra-ci-prebuilt-fd446e8-qa5.md`) e o delta da ancestralidade pelo QA 6.
