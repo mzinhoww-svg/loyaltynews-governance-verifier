@@ -1,7 +1,7 @@
 {
   "status": "configured",
   "root_fingerprint": "1D4A3E263898E5B0C0590FD7A2A2BB73C4C84309",
-  "baseline_commit": "7f85e5c968e79ff064e38fd25c8356ba3dc21f1c",
+  "baseline_commit": "90bac6b647185cb6287f447e89e86b721d4a0c36",
   "executor": {"fingerprint": "E842D7C1ECA0045D3D7BBFEA47D7C1BC57FD351B", "provider": "anthropic"},
   "reviewer": {"fingerprint": "BA00DAC46FE7488272BC4F6A72099676E263421D", "provider": "openai"},
   "verifier": {"fingerprint": "7B4BEE2FE4D42B297A583AF9100957DE6F761D6A"},

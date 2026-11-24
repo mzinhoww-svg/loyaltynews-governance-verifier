@@ -258,10 +258,20 @@ class PreMerge(base.R006):
         y = (V / '.github' / 'workflows' / 'verifier.yml').read_text(encoding='utf-8')
         steps = [s for s in re.split(r'\n      - ', y) if 'scripts/provenance.py' in s]
         self.assertEqual(len(steps), 3)   # signer, override, pr-status
+        # 24/11 (P3 do QA 6 no 39f3e0f): conferir tambem a ORIGEM de cada variavel, nao so a presenca de ${{ ... }}
+        origem = {'GITHUB_TOKEN': '${{ github.token }}',
+                  'RUNNER_ARTIFACT_ID': '${{ needs.runner.outputs.artifact-id }}',
+                  'RUNNER_ARTIFACT_DIGEST': '${{ needs.runner.outputs.artifact-digest }}',
+                  'RUNNER_REPORT_SHA256': '${{ needs.runner.outputs.report_sha256 }}'}
+        self.assertEqual(sorted(origem), need)
+        runner = y[y.index('  runner:\n'):y.index('  reviewer:\n')]
+        for out in ('artifact-id: ${{ steps.up.outputs.artifact-id }}', 'artifact-digest: ${{ steps.up.outputs.artifact-digest }}',
+                    'report_sha256: ${{ steps.rep.outputs.report_sha256 }}'):
+            self.assertIn(out, runner)                                       # as saidas existem no job runner
         for s in steps:
             env = s.split('run: |', 1)[0]
             for k in need:
-                self.assertRegex(env, rf'\n\s+{k}: \$\{{\{{ ', f'passo sem {k}: {s.splitlines()[0][:60]}')
+                self.assertRegex(env, rf'\n\s+{k}: {re.escape(origem[k])}(\s|$)', f'passo sem {k} da origem certa: {s.splitlines()[0][:60]}')
 
     def test_p10_dispatch_accept_override(self):
         # 24/11 (DP-45): accept-override so por dispatch, com dp e override validados; sem LLM; assinatura no ambiente verifier-signing
