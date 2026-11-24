@@ -126,6 +126,30 @@ def build_package(repo, target, task, report, cfg):
         evidences[j] = json.loads(raw.decode('utf-8'))
     for j, ev in evidences.items():
         parts.append(f'## Evidencia {j}\n' + json.dumps(ev, ensure_ascii=False, indent=1))
+    # 24/11 (rev. 8 da R0-01, problema[2]; P3 do QA 6: logo depois da evidencia, antes dos artefatos, para o corte global no teto nunca a alcancar): a relacao entre o commit do registro de evidencia e o alvo e FATO do git, calculado
+    # aqui (ancestralidade + sha256 de cada artefato nos dois commits), para o revisor nao ter de presumi-la.
+    rel = []
+    for j, ev in evidences.items():
+        c = ev.get('commit_sha')
+        if not isinstance(c, str) or not re.fullmatch(r'[0-9a-f]{40}', c):
+            rel.append(f'- {j}: commit_sha do registro ausente ou invalido')
+            continue
+        anc = git(repo, 'merge-base', '--is-ancestor', c, target, check=False).returncode == 0
+        same = []
+        for a in ev.get('artefatos', []):
+            b0, b1 = show(repo, c, a['caminho']), show(repo, target, a['caminho'])
+            same.append(b0 is not None and b1 is not None and sha256(b0) == sha256(b1) == a.get('sha256'))
+        # DP-48: o alvo vale se descende do commit do registro e SO acrescenta/altera arquivos em governance/evidence
+        chg = git(repo, 'diff', '--name-only', c, target, check=False).stdout.decode(errors='replace').split() if anc else []
+        fora = [x for x in chg if not x.startswith('governance/evidence/')]
+        lista = (', '.join(fora[:10]) + (f' (+{len(fora) - 10})' if len(fora) > 10 else '')) if fora else ''
+        rel.append(f"- {j}: registro aponta para {c[:12]}; {'E' if anc else 'NAO E'} ancestral do alvo {target[:12]} (git merge-base --is-ancestor); "
+                   f"{sum(same)}/{len(same)} artefatos com o mesmo sha256 no commit do registro, no alvo e no registro; "
+                   + (f"do commit do registro ao alvo mudaram {len(chg)} arquivo(s), "
+                      + ("todos em governance/evidence/" if not fora else f"{len(fora)} FORA de governance/evidence/: {lista}") + ". "
+                      if anc else '')
+                   + "Por construcao, o gov_submit_evidence grava o commit dos artefatos e o registro entra no commit seguinte (DP-48).")
+    parts.append('## Relacao do commit da evidencia com o alvo (calculada pelo verificador)\n' + '\n'.join(rel))
     # artefatos: lidos uma vez; texto decodificado (ou marcador de binario/ausente)
     arts = []
     for j, ev in evidences.items():
@@ -298,6 +322,8 @@ def main():
             'runner_report_sha256': sha256(canon(report)), 'total_cost': gen.get('total_cost'),
             'criterios_atendidos': sum(1 for c in verdict['criterios'] if c.get('atendido') is True),
             'criterios_total': len(verdict['criterios']),
+            # 24/11 (achado MEDIO do QA 6): total real de problemas; o override recusa se a lista gravada (teto MAX_ITEMS) for menor
+            'problemas_total': len(verdict.get('problemas') or []),
             # 24/11 (DP-45): justificativas gravadas na tag, para conferir se a recusa e SO por ponto coberto por DP registrada.
             # Texto do modelo sobre artefatos publicos; com teto por campo e redacao de padroes de credencial.
             'criterios': [{'criterio': clip(c.get('criterio'), 600), 'atendido': c.get('atendido') is True,

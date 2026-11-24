@@ -100,6 +100,60 @@ class Pacote(unittest.TestCase):
         pkg = review.build_package(self.repo, h, 'R0-01', {'tests': []}, CFG)
         self.assertIn('[ids citados sem entrada no decisions.yaml: DP-46]', pkg)
 
+    def test_08_relacao_commit_da_evidencia_com_o_alvo(self):
+        # 24/11 (problema[2] da rev. 8): fato do git no pacote: ancestral + artefatos iguais
+        r = self.repo
+        a = self.commit({'inv.md': 'conteudo'}, [])                      # commit dos artefatos (A)
+        ev = json.loads(git(r, 'show', f'{a}:governance/evidence/R0/R0-01.json'))
+        ev['commit_sha'] = a
+        (r / 'governance' / 'evidence' / 'R0' / 'R0-01.json').write_text(json.dumps(ev), encoding='utf-8')
+        git(r, 'add', '-A'); git(r, 'commit', '-q', '-m', 'registro')
+        h = git(r, 'rev-parse', 'HEAD')
+        pkg = review.build_package(r, h, 'R0-01', {'tests': []}, CFG)
+        self.assertIn('## Relacao do commit da evidencia com o alvo (calculada pelo verificador)', pkg)
+        self.assertIn(f'- R0-01: registro aponta para {a[:12]}; E ancestral do alvo {h[:12]}', pkg)
+        self.assertIn('1/1 artefatos com o mesmo sha256', pkg)
+        self.assertIn('do commit do registro ao alvo mudaram 1 arquivo(s), todos em governance/evidence/', pkg)   # condicao da DP-48
+        # alvo que tambem muda arquivo fora de governance/evidence: o pacote nomeia o arquivo
+        (r / 'outro.md').write_text('mudou fora'); git(r, 'add', '-A'); git(r, 'commit', '-q', '-m', 'fora da evidencia')
+        pkg = review.build_package(r, git(r, 'rev-parse', 'HEAD'), 'R0-01', {'tests': []}, CFG)
+        self.assertIn('1 FORA de governance/evidence/: outro.md', pkg)
+        git(r, 'reset', '-q', '--hard', h)
+        # commit fora da historia do alvo e artefato alterado depois: o pacote diz
+        git(r, 'checkout', '-q', '--orphan', 'outra'); git(r, 'rm', '-rq', '--cached', '.')
+        (r / 'x.txt').write_text('x'); git(r, 'add', 'x.txt'); git(r, 'commit', '-q', '-m', 'fora')
+        fora = git(r, 'rev-parse', 'HEAD'); git(r, 'checkout', '-q', '-f', h)
+        ev['commit_sha'] = fora
+        (r / 'governance' / 'evidence' / 'R0' / 'R0-01.json').write_text(json.dumps(ev), encoding='utf-8')
+        git(r, 'add', '-A'); git(r, 'commit', '-q', '-m', 'registro ruim')
+        h2 = git(r, 'rev-parse', 'HEAD')
+        pkg = review.build_package(r, h2, 'R0-01', {'tests': []}, CFG)
+        self.assertIn(f'NAO E ancestral do alvo {h2[:12]}', pkg)
+        self.assertIn('0/1 artefatos', pkg)
+        ev['commit_sha'] = 'xyz'
+        (r / 'governance' / 'evidence' / 'R0' / 'R0-01.json').write_text(json.dumps(ev), encoding='utf-8')
+        git(r, 'add', '-A'); git(r, 'commit', '-q', '-m', 'sem sha')
+        pkg = review.build_package(r, git(r, 'rev-parse', 'HEAD'), 'R0-01', {'tests': []}, CFG)
+        self.assertIn('- R0-01: commit_sha do registro ausente ou invalido', pkg)
+
+    def test_09_relacao_sobrevive_ao_corte_global_e_vem_antes_dos_artefatos(self):
+        # 24/11 (P3 do QA 6): a secao fica logo depois da evidencia; o corte global no teto corta o fim, nunca ela
+        r = self.repo
+        a = self.commit({'inv.md': 'conteudo'}, [])
+        ev = json.loads(git(r, 'show', f'{a}:governance/evidence/R0/R0-01.json'))
+        ev['commit_sha'] = a
+        (r / 'governance' / 'evidence' / 'R0' / 'R0-01.json').write_text(json.dumps(ev), encoding='utf-8')
+        git(r, 'add', '-A'); git(r, 'commit', '-q', '-m', 'registro')
+        h = git(r, 'rev-parse', 'HEAD')
+        big = {'tests': [{'id': f'T{i}', 'result': 'pass', 'log_sha256': '0' * 64} for i in range(400)]}   # relatorio enorme no fim
+        cfg = dict(CFG, max_prompt_chars=3000)
+        pkg = review.build_package(r, h, 'R0-01', big, cfg)
+        self.assertIn('[PACOTE TRUNCADO NO TETO DE 3000 CARACTERES]', pkg)        # houve corte global
+        sec = '## Relacao do commit da evidencia com o alvo (calculada pelo verificador)'
+        self.assertIn(sec, pkg)
+        self.assertIn('E ancestral do alvo', pkg)
+        self.assertLess(pkg.index(sec), pkg.index('## Artefato '))
+
     def test_05_water_fill(self):
         self.assertEqual(review._water_fill({1: 10, 2: 100, 3: 1000}, 2000), {1: 10, 2: 100, 3: 1000})
         self.assertEqual(review._water_fill({1: 10, 2: 1000, 3: 1000}, 610), {1: 10, 2: 300, 3: 300})

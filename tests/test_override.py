@@ -260,6 +260,24 @@ class Override(unittest.TestCase):
         git(self.clone, '-c', 'gpg.format=openpgp', 'tag', '-s', '-u', self.fp['reviewer'], '-m', canon(pl).decode(), name, self.M2)
         self.assert_refused(self.override(self.authorize(doc=self.raw_doc())), 'OVERRIDE_REVIEW_WITHOUT_CRITERIA')
 
+    def test_o13_parecer_com_mais_pontos_que_a_tag_recusado(self):
+        # 24/11 (achado MEDIO do QA 6): 30 problemas no parecer, a tag guarda 24 -> um ponto pode estar invisivel -> recusa
+        B.FakeOpenRouter.state['verdict'] = {**UNFAV, 'problemas': [f'problema {i}' for i in range(30)]}
+        self.reject_first()
+        p = self.payload(self.clone, f'review/R0-01/{self.M2}')
+        self.assertEqual((len(p['problemas']), p['problemas_total']), (24, 30))
+        d = self.raw_doc()
+        d['mapeamento']['problemas'] = [{'texto': t, 'dps': ['DP-33']} for t in p['problemas']]
+        self.assert_refused(self.override(self.authorize(doc=d)), 'OVERRIDE_REVIEW_TRUNCATED')
+        # total adulterado numa tag re-assinada pelo revisor tambem e recusado (criterios_total != lista)
+        name = f'review/R0-01/{self.M2}'
+        pl = {**p, 'problemas': p['problemas'][:1], 'problemas_total': 1, 'criterios_total': 9}
+        git(self.clone, 'tag', '-d', name)
+        git(self.clone, '-c', 'gpg.format=openpgp', 'tag', '-s', '-u', self.fp['reviewer'], '-m', canon(pl).decode(), name, self.M2)
+        d = self.raw_doc()
+        d['mapeamento']['problemas'] = [{'texto': 'problema 0', 'dps': ['DP-33']}]
+        self.assert_refused(self.override(self.authorize(doc=d)), 'OVERRIDE_REVIEW_TRUNCATED')
+
     def test_o12_ja_aceita_nao_repete(self):
         self.reject_first()
         e = self.authorize()

@@ -47,9 +47,17 @@ def git_err(raw, cap=1500):
     if len(s) <= cap:
         return s
     head, tail, sep = s[:200], s[-400:], ' [...] '
-    diag = ' | '.join(ln.strip() for ln in s.splitlines() if _GIT_DIAG.search(ln))
     room = max(0, cap - len(head) - len(tail) - 2 * len(sep))
-    return head + sep + diag[:room] + sep + tail
+    # 24/11 (nota baixa do QA 6): so linhas de diagnostico INTEIRAS; as que nao cabem sao contadas, nunca cortadas no meio
+    kept, left = [], 0
+    for ln in (x.strip() for x in s.splitlines() if _GIT_DIAG.search(x)):
+        extra = len(ln) + (3 if kept else 0)
+        if left == 0 and sum(len(k) + 3 for k in kept) + extra <= room - 40:   # 40 = espaco do marcador
+            kept.append(ln)
+        else:
+            left += 1
+    diag = ' | '.join(kept) + (f' | [+{left} linha(s) de diagnostico]' if left else '')
+    return head + sep + diag + sep + tail
 
 
 class Keyring:

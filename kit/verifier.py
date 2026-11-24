@@ -61,6 +61,8 @@ def verify_override(g,trust,i,head,auth,dps_in):
  if review.get('decision')!='unfavorable':fail('OVERRIDE_REVIEW_NOT_UNFAVORABLE')
  crit,probs=review.get('criterios'),review.get('problemas')
  if not isinstance(crit,list) or not isinstance(probs,list) or not all(isinstance(c,dict) for c in crit):fail('OVERRIDE_REVIEW_WITHOUT_CRITERIA')
+ # 24/11 (achado MEDIO do QA 6): se o parecer tinha mais pontos do que a tag guarda (teto do review.py), um ponto pode estar invisivel
+ if review.get('criterios_total')!=len(crit) or review.get('problemas_total')!=len(probs):fail('OVERRIDE_REVIEW_TRUNCATED: a tag nao guarda todos os criterios/problemas do parecer')
  failed=[c.get('criterio') for c in crit if c.get('atendido') is not True]
  if not failed and not probs:fail('OVERRIDE_NOTHING_TO_COVER')
  m=d['mapeamento']

@@ -40,6 +40,18 @@ class GitErr(unittest.TestCase):
         out = git_err(('error: ' + 'y' * 5000 + '\n').encode() * 5)
         self.assertLessEqual(len(out), 1500)
 
+    def test_g6_linhas_de_diagnostico_nunca_cortadas_no_meio(self):
+        # 24/11 (nota baixa do QA 6): diagnosticos longos entram inteiros ou sao contados, nunca pela metade
+        linhas = [f'error: diagnostico {i:02d} ' + 'z' * 150 + f' FIM{i:02d}' for i in range(12)]
+        out = git_err(('remote: ' + 'r' * 300 + '\n' + '\n'.join(linhas) + '\n' + 'remote: ' + 'q' * 500 + '\n').encode())
+        self.assertLessEqual(len(out), 1500)
+        mid = out.split(' [...] ')[1]
+        for i in range(12):
+            frag = f'diagnostico {i:02d} '
+            if frag in mid:
+                self.assertIn(f'FIM{i:02d}', mid)      # se entrou, entrou inteira
+        self.assertRegex(mid, r'\[\+\d+ linha\(s\) de diagnostico\]')
+
     def test_g5_git_levanta_signerror_com_mensagem_completa(self):
         with self.assertRaises(SignError) as cm:
             git(ROOT, 'rev-parse', '--verify', 'refs/tags/nao-existe-' + 'z' * 40)
