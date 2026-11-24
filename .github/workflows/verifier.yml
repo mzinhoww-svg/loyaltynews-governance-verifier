@@ -299,6 +299,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RUNNER_ARTIFACT_ID: ${{ needs.runner.outputs.artifact-id }}
+          RUNNER_ARTIFACT_DIGEST: ${{ needs.runner.outputs.artifact-digest }}   # 24/11: faltava (run 45392235368, KeyError no provenance.py)
+          RUNNER_REPORT_SHA256: ${{ needs.runner.outputs.report_sha256 }}
           TARGET: ${{ needs.discover.outputs.target }}
           TASK: ${{ needs.discover.outputs.task }}
         run: |

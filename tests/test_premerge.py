@@ -247,6 +247,22 @@ class PreMerge(base.R006):
         self.assertIn('pulls?state=open', pr_blk)                                                                         # target = head de PR aberto
         self.assertIn("target nao e head de PR aberto'; exit 1", pr_blk)
 
+    def test_p11_todo_passo_com_provenance_passa_as_variaveis_que_ele_le(self):
+        # 24/11 (run 45392235368): o job override chamava provenance.py sem RUNNER_ARTIFACT_DIGEST -> KeyError antes de assinar.
+        # As variaveis exigidas saem do proprio provenance.py (E['X'] que nao sao do runner do GitHub).
+        import re
+        prov = (V / 'scripts' / 'provenance.py').read_text(encoding='utf-8')
+        need = sorted(set(re.findall(r"E\['([A-Z0-9_]+)'\]", prov)) - {'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
+                                                                  'GITHUB_WORKFLOW_REF', 'GITHUB_WORKFLOW_SHA'})
+        self.assertEqual(need, ['GITHUB_TOKEN', 'RUNNER_ARTIFACT_DIGEST', 'RUNNER_ARTIFACT_ID', 'RUNNER_REPORT_SHA256'])
+        y = (V / '.github' / 'workflows' / 'verifier.yml').read_text(encoding='utf-8')
+        steps = [s for s in re.split(r'\n      - ', y) if 'scripts/provenance.py' in s]
+        self.assertEqual(len(steps), 3)   # signer, override, pr-status
+        for s in steps:
+            env = s.split('run: |', 1)[0]
+            for k in need:
+                self.assertRegex(env, rf'\n\s+{k}: \$\{{\{{ ', f'passo sem {k}: {s.splitlines()[0][:60]}')
+
     def test_p10_dispatch_accept_override(self):
         # 24/11 (DP-45): accept-override so por dispatch, com dp e override validados; sem LLM; assinatura no ambiente verifier-signing
         y = (V / '.github' / 'workflows' / 'verifier.yml').read_text(encoding='utf-8')
