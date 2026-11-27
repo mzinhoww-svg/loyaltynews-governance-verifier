@@ -3,10 +3,13 @@
 Uso: provenance.py <zip-baixado> <trust.json> <policy.json> <target_sha> <task>
 Ambiente: GITHUB_TOKEN (actions:read), GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT,
 GITHUB_WORKFLOW_REF, GITHUB_WORKFLOW_SHA, RUNNER_ARTIFACT_ID, RUNNER_ARTIFACT_DIGEST, RUNNER_REPORT_SHA256.
-Sai 0 so se workflow, run, tentativa, job, artefato (ZIP), relatorio (JSON), politica e commit baterem entre si."""
+Sai 0 so se workflow, run, tentativa, job, artefato (ZIP), relatorio (JSON), politica e commit baterem entre si.
+Sai 3 se TUDO isso bate, o relatorio traz cada teste da politica uma unica vez (pass ou fail) e algum reprovou: so o passo do
+assinador em modo accept aceita o 3, para registrar a rejeicao. Qualquer outra divergencia sai 1."""
 import hashlib, io, json, os, sys, urllib.request, zipfile
 
 E = os.environ
+TESTE_REPROVADO = 3
 def api(path):
     req = urllib.request.Request('https://api.github.com' + path, headers={
         'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28',
@@ -47,9 +50,13 @@ def main():
     if sha(pol_raw) != trust['runner_policy_sha256'] or rep.get('runner_policy_sha256') != trust['runner_policy_sha256']: err.append('policy')
     if rep.get('commit_sha') != target or rep.get('id') != task or rep.get('clean_environment') is not True: err.append('report.target')
     want_ids = {t['id'] for t in json.loads(pol_raw)['checks'].get(task, [])}
-    got = {t['id']: t['result'] for t in rep.get('tests', [])}
-    if not want_ids or set(got) != want_ids or any(v != 'pass' for v in got.values()): err.append('tests')
+    tests = rep.get('tests', [])
+    got = {t['id']: t['result'] for t in tests}
+    completo = bool(want_ids) and set(got) == want_ids and len(tests) == len(got)   # cada teste da politica, uma unica vez
+    if not completo or any(v != 'pass' for v in got.values()): err.append('tests')
     for e in err: print('PROVENIENCIA FALHOU:', e)
+    if err == ['tests'] and completo and all(v in ('pass', 'fail') for v in got.values()):
+        sys.exit(TESTE_REPROVADO)
     sys.exit(1 if err else 0)
 
 if __name__ == '__main__':

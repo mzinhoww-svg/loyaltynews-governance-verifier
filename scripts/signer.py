@@ -14,6 +14,8 @@ Regras (02 v3 par.2 e 03 v2/v3):
  - checks/<T>/<alvo>: assinada pelo verificador com o relatorio do runner (clean_environment, politica, testes).
  - review/<T>/<alvo>: objeto vindo do revisor, reconstruido byte a byte (git mktag) e verificado pela chave do revisor.
  - aceite/rejeicao: kit/verifier.py (gov_accept_gate), que assina task/<T>/accepted ou task/<T>/rejected/<alvo>.
+ - runner reprovado (27/11): em accept o assinador NUNCA chama o aceite (mesmo com checks/ e review/ antigos aprovados); so grava
+   a rejeicao com RUNNER_FAILED. Alvo com essa rejeicao nao vira aceite; tarefa ja aceita nao recebe rejeicao.
  - push: cada ref criada nesta execucao e reverificada (tipo, assinante, alvo, payload) antes; sem --force; so refs/tags/.
  - accept-override (DP-45, 24/11): mesmo alvo do accept; runner desta execucao 100% aprovado; parecer CONTRARIO existente
    (review/<T>/<alvo>, com criterios gravados); autorizacao ln-override/1 assinada pela RAIZ (--override-file) e --dp iguais
@@ -30,6 +32,7 @@ import subprocess
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
+MARCA_RUNNER = 'RUNNER_FAILED'
 sys.path.insert(0, str(HERE))
 from lnsign import SHA, TASK, Keyring, SignError, git, git_err, import_tag, sign_tag, verify_tag  # noqa: E402
 
@@ -103,6 +106,15 @@ def main():
         kr = Keyring(HERE.parent / 'keys', 'VERIFIER_GPG_PRIVATE_KEY', 'VERIFIER_GPG_PASSPHRASE', expect_secret_fpr=vfpr)
         who = ('Loyalty Verifier', 'verifier@loyalty.invalid')
 
+        gate_ref = ('gate/' + backlog[a.task]['gate'] if is_gate else 'task/' + a.task)
+        runner_falhou = not report.get('tests') or any(t.get('result') != 'pass' for t in report['tests'])
+        if a.mode in ('accept', 'accept-override'):
+            anterior = verify_tag(repo, kr, f'{gate_ref}/rejected/{a.target}', vfpr, a.target)
+            if anterior and MARCA_RUNNER in str(anterior.get('reason', '')):
+                raise SignError('alvo ja reprovado pelo runner: nao vira aceite (precisa de um novo merge commit)')
+            if runner_falhou and git(repo, 'rev-parse', '-q', '--verify', f'refs/tags/{gate_ref}/accepted', check=False).returncode == 0:
+                raise SignError('tarefa ja aceita: rodada com runner reprovado nao grava rejeicao')
+
         # checks/<T>/<alvo> (idempotente: se ja existe e e valida, reaproveita)
         cname = f'checks/{a.task}/{a.target}'
         if not verify_tag(repo, kr, cname, vfpr, a.target):
@@ -161,10 +173,18 @@ def main():
             # verifier.py assina via git do clone: aplica o gpg.program (loopback) so na config local do clone descartavel
             if kr.gpg_program:
                 git(repo, 'config', 'gpg.program', kr.gpg_program)
-            p = subprocess.run([sys.executable, '-I', '-B', str(kit), '--repo', str(repo), '--trust', str(trust_path),
-                                'gov_accept_gate', a.task], capture_output=True, env=env)
+            if runner_falhou:
+                falhos = ', '.join(sorted({str(t.get('id')) for t in report.get('tests', []) if t.get('result') != 'pass'})) or 'sem teste'
+                acao = ['gov_reject_gate', a.task, '--reason', f'REQUIRED_TESTS_FAILED_OR_MISSING;{MARCA_RUNNER}:{falhos}']
+            else:
+                acao = ['gov_accept_gate', a.task]
+            p = subprocess.run([sys.executable, '-I', '-B', str(kit), '--repo', str(repo), '--trust', str(trust_path), *acao],
+                               capture_output=True, env=env)
             gate_ref = ('gate/' + backlog[a.task]['gate'] if is_gate else 'task/' + a.task)
-            if p.returncode == 0:
+            if runner_falhou and p.returncode:
+                # sem a rejeicao nada sobe: checks/ reprovado sozinho prenderia o alvo sem tira-lo da fila
+                raise SignError('rejeicao do runner nao registrada: ' + git_err(p.stderr))
+            if p.returncode == 0 and not runner_falhou:
                 verdict = 'accepted'
                 created.append(gate_ref + '/accepted')
             else:
